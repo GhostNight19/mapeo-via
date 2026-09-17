@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<title>Mapeo de Vía</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-512.png">
+<link rel="apple-touch-icon" href="icon-512.png">
+<style>
+:root{
+  --bg:#0b1220; --panel:#131c2e; --panel2:#1a2540; --line:#2a3656;
+  --tx:#e8eefc; --mut:#8e9bba; --acc:#3b82f6; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+  --v1:#3b82f6; --v2:#22c55e; --v4:#f59e0b; --v8:#d946ef;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.35 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+body{padding:0 12px calc(24px + env(safe-area-inset-bottom))}
+header{position:sticky;top:0;z-index:5;background:var(--bg);padding:10px 0 8px;border-bottom:1px solid var(--line)}
+h1{font-size:17px;margin:0 0 6px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+h1 small{font-weight:500;color:var(--mut);font-size:12px}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:0 0 8px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;margin:10px 0}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.stat{background:var(--panel2);border-radius:10px;padding:4px 8px;min-width:0}
+.stat b{display:block;font-size:17px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stat span{font-size:11px;color:var(--mut)}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.row>*{flex:1 1 0}
+button{font:inherit;color:var(--tx);background:var(--panel2);border:2px solid var(--line);border-radius:12px;padding:12px 8px;font-weight:700;cursor:pointer;min-height:48px;touch-action:manipulation}
+button:active{transform:scale(.97)}
+button.on{border-color:var(--acc);background:#1d3a70}
+button:disabled{opacity:.4}
+.big{font-size:18px;min-height:60px}
+.go{background:#14532d;border-color:var(--ok)}
+.stop{background:#5b1616;border-color:var(--bad)}
+.pause{background:#5a3b06;border-color:var(--warn)}
+.via{font-size:22px;min-height:64px}
+.via.on[data-v="V1"]{background:var(--v1);border-color:#fff}
+.via.on[data-v="V2"]{background:var(--v2);border-color:#fff;color:#04210f}
+.via.on[data-v="V4"]{background:var(--v4);border-color:#fff;color:#2a1800}
+.via.on[data-v="V8"]{background:var(--v8);border-color:#fff}
+select,input{font:inherit;color:var(--tx);background:var(--panel2);border:2px solid var(--line);border-radius:12px;padding:12px;width:100%;min-height:50px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.chips button{flex:0 0 auto;min-height:40px;padding:6px 10px;font-weight:600;font-size:14px}
+.mark-st{background:#1e3a8a;border-color:#60a5fa}
+.mark-cr{background:#7c2d12;border-color:#fb923c}
+.hint{font-size:12px;color:var(--mut);margin:6px 0 0}
+.gps{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--bad);margin-right:4px;vertical-align:middle}
+.gps.ok{background:var(--ok)} .gps.mid{background:var(--warn)}
+canvas{width:100%;height:260px;background:#070c17;border-radius:10px;display:block;touch-action:none}
+.list{max-height:320px;overflow:auto;margin:0;padding:0;list-style:none}
+.list li{display:flex;gap:8px;align-items:center;padding:8px 2px;border-bottom:1px solid var(--line);font-size:14px}
+.list li .t{flex:1;min-width:0}
+.list li .t small{display:block;color:var(--mut);font-size:12px}
+.list li button{min-height:36px;padding:4px 10px;font-size:13px;flex:0 0 auto}
+.tag{display:inline-block;border-radius:6px;padding:1px 6px;font-size:11px;font-weight:700;margin-right:4px;background:var(--line)}
+table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:5px 4px;border-bottom:1px solid var(--line)}
+th{color:var(--mut);font-weight:600}
+td.n,th.n{text-align:right}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#f8fafc;color:#0b1220;padding:12px 18px;border-radius:12px;font-weight:700;z-index:50;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw;text-align:center}
+.toast.show{opacity:1}
+.banner{background:#5a3b06;border:1px solid var(--warn);border-radius:10px;padding:8px 10px;font-size:13px;margin-top:8px;display:none}
+.flash{animation:fl .5s}
+@keyframes fl{0%{background:#fff}100%{}}
+details summary{cursor:pointer;font-weight:700;padding:4px 0}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🛤️ Mapeo de Vía <small id="hdrState">detenido</small></h1>
+  <div class="stats">
+    <div class="stat"><b id="sDist">0,000</b><span>km recorrido</span></div>
+    <div class="stat"><b id="sTramo">0</b><span>m desde estación</span></div>
+    <div class="stat"><b id="sVel">–</b><span>km/h</span></div>
+    <div class="stat"><b id="sPk">–</b><span>PK aprox. (bitácora)</span></div>
+    <div class="stat"><b id="sPts">0</b><span>puntos</span></div>
+    <div class="stat"><b><i class="gps" id="gDot"></i><span id="sAcc" style="font-size:17px;color:var(--tx)">–</span></b><span>precisión GPS (m)</span></div>
+  </div>
+  <div class="banner" id="bnr"></div>
+</header>
+
+<section class="card">
+  <h2>Línea y sentido</h2>
+  <div class="row" id="lineas">
+    <button data-l="L1">L1 · Biotrén</button>
+    <button data-l="L2" class="on">L2 · Coronel</button>
+  </div>
+  <div class="row" id="sentidos" style="margin-top:8px"></div>
+</section>
+
+<section class="card">
+  <h2>Vía por la que voy</h2>
+  <div class="row" id="vias">
+    <button class="via" data-v="V1">V1</button>
+    <button class="via" data-v="V2">V2</button>
+    <button class="via" data-v="V4">V4</button>
+    <button class="via" data-v="V8">V8</button>
+  </div>
+  <p class="hint">Al tocar otra vía queda marcado el punto exacto del cambio.</p>
+</section>
+
+<section class="card">
+  <div class="row">
+    <button class="big go" id="bStart">▶ INICIAR</button>
+    <button class="big pause" id="bPause" disabled>⏸ PAUSA</button>
+    <button class="big stop" id="bStop" disabled>⏹ TERMINAR</button>
+  </div>
+  <p class="hint">Graba 1 punto por segundo. Mantén la pantalla encendida y esta página al frente: con la pantalla bloqueada el teléfono deja de entregar GPS.</p>
+</section>
+
+<section class="card">
+  <h2>Estación</h2>
+  <select id="selEst"></select>
+  <div class="row" style="margin-top:8px">
+    <button class="big mark-st" id="bEst">📍 MARCAR ESTACIÓN</button>
+  </div>
+  <p class="hint">Márcala con la cabina a la altura del letrero / centro del andén. Después de marcar pasa sola a la siguiente estación del sentido.</p>
+</section>
+
+<section class="card">
+  <h2>Cruces y puntos</h2>
+  <div class="chips" id="tipos"></div>
+  <input id="inNom" placeholder="Nombre (opcional): ej. Cruce Pedro de Valdivia">
+  <div class="row" style="margin-top:8px">
+    <button class="big mark-cr" id="bCruce">✚ MARCAR <span id="lblTipo">CRUCE</span></button>
+  </div>
+  <p class="hint">Un solo toque basta: el nombre se puede poner o corregir después en la lista.</p>
+</section>
+
+<section class="card">
+  <h2>Mapa del recorrido</h2>
+  <canvas id="map"></canvas>
+  <div class="row" style="margin-top:8px">
+    <button id="bFit">Ajustar vista</button>
+    <button id="bFollow" class="on">Seguir tren</button>
+  </div>
+  <p class="hint">Gris: trazado aproximado de la bitácora. Color: lo grabado (azul V1, verde V2, ámbar V4, fucsia V8). ● estación, ◆ cruce, ▲ cambio de vía.</p>
+</section>
+
+<section class="card">
+  <h2>Marcas de este recorrido</h2>
+  <ul class="list" id="marks"></ul>
+  <div class="row" style="margin-top:8px"><button id="bUndo">↶ Deshacer última marca</button></div>
+</section>
+
+<section class="card">
+  <h2>Medición por tramo</h2>
+  <div id="resumen"><p class="hint">Aparece al marcar estaciones.</p></div>
+</section>
+
+<section class="card">
+  <h2>Recorridos guardados</h2>
+  <ul class="list" id="sessions"></ul>
+  <p class="hint">Todo queda guardado en el teléfono aunque cierres la página. Exporta y envíate el archivo al terminar.</p>
+</section>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+/* =========================================================================
+   MAPEO DE VÍA · EFE SUR
+   Graba el recorrido con GPS (1 punto por segundo) y deja marcar estaciones,
+   cruces y cambios de vía. Con eso se mide la línea de verdad y se obtiene un
+   PK por distancia recorrida, más fino que el trazado muestreado cada 500 m
+   que usan hoy las prevenciones de la bitácora.
+   ========================================================================= */
+
+/* Referencia tomada de la bitácora (PREV_TRAZADO / PREV_ESTACIONES).
+   L1: PK 0 en San Rosendo. L2: PK 0 en Concepción, Coronel en el 27,43. */
+const REF_TRAZADO = {"L1":[[0.0,-37.264921,-72.720859],[0.5,-37.264666,-72.726462],[1.0,-37.261279,-72.73011],[1.5,-37.258187,-72.734142],[2.0,-37.254448,-72.737227],[2.5,-37.250044,-72.73664],[3.0,-37.245654,-72.735539],[3.5,-37.241162,-72.735317],[4.0,-37.236947,-72.737077],[4.5,-37.233662,-72.740925],[5.0,-37.230311,-72.744651],[5.5,-37.226527,-72.747678],[6.0,-37.222329,-72.74967],[6.5,-37.218735,-72.752972],[7.0,-37.216631,-72.75793],[7.5,-37.213104,-72.761278],[8.0,-37.209121,-72.763817],[8.5,-37.205434,-72.767046],[9.0,-37.202336,-72.771131],[9.5,-37.199329,-72.775325],[10.0,-37.198066,-72.78069],[10.5,-37.199719,-72.78558],[11.0,-37.200636,-72.79076],[11.5,-37.202965,-72.795561],[12.0,-37.205895,-72.799676],[12.5,-37.205713,-72.805209],[13.0,-37.202285,-72.808695],[13.5,-37.198582,-72.811897],[14.0,-37.194831,-72.815009],[14.5,-37.193338,-72.819943],[15.0,-37.194306,-72.825045],[15.5,-37.195757,-72.830097],[16.0,-37.196356,-72.835575],[16.5,-37.196747,-72.841167],[17.0,-37.1953,-72.84642],[17.5,-37.193034,-72.851295],[18.0,-37.190567,-72.85601],[18.5,-37.188405,-72.860949],[19.0,-37.184736,-72.864164],[19.5,-37.181364,-72.867819],[20.0,-37.178457,-72.872052],[20.5,-37.175576,-72.876319],[21.0,-37.174015,-72.881524],[21.5,-37.173239,-72.887016],[22.0,-37.17178,-72.892241],[22.5,-37.169358,-72.896898],[23.0,-37.166877,-72.901198],[23.5,-37.165271,-72.906411],[24.0,-37.162716,-72.910986],[24.5,-37.161125,-72.916092],[25.0,-37.15687,-72.916749],[25.5,-37.152495,-72.917758],[26.0,-37.148918,-72.921113],[26.5,-37.146163,-72.925483],[27.0,-37.143766,-72.930173],[27.5,-37.139697,-72.932519],[28.0,-37.135514,-72.934587],[28.5,-37.131329,-72.936651],[29.0,-37.127145,-72.938716],[29.5,-37.12296,-72.940781],[30.0,-37.118778,-72.942853],[30.5,-37.114598,-72.94493],[31.0,-37.11045,-72.947098],[31.5,-37.10681,-72.950353],[32.0,-37.102436,-72.951647],[32.5,-37.098045,-72.95286],[33.0,-37.093654,-72.954074],[33.5,-37.089262,-72.955287],[34.0,-37.084871,-72.9565],[34.5,-37.08048,-72.957712],[35.0,-37.076167,-72.959252],[35.5,-37.072109,-72.96168],[36.0,-37.067829,-72.963283],[36.5,-37.063335,-72.963327],[37.0,-37.058838,-72.963271],[37.5,-37.054342,-72.963263],[38.0,-37.04989,-72.962716],[38.5,-37.04564,-72.964137],[39.0,-37.041539,-72.966446],[39.5,-37.037088,-72.967021],[40.0,-37.032679,-72.967622],[40.5,-37.028984,-72.970692],[41.0,-37.024781,-72.972398],[41.5,-37.020304,-72.972895],[42.0,-37.015866,-72.973738],[42.5,-37.011458,-72.972642],[43.0,-37.007153,-72.971338],[43.5,-37.004271,-72.967059],[44.0,-37.00096,-72.963447],[44.5,-36.998655,-72.958613],[45.0,-36.996085,-72.954005],[45.5,-36.992875,-72.95009],[46.0,-36.989516,-72.946385],[46.5,-36.987203,-72.941678],[47.0,-36.983005,-72.940222],[47.5,-36.978665,-72.941698],[48.0,-36.974215,-72.942367],[48.5,-36.970014,-72.944188],[49.0,-36.967794,-72.949018],[49.5,-36.964855,-72.953148],[50.0,-36.965949,-72.958208],[50.5,-36.967669,-72.963337],[51.0,-36.968682,-72.968753],[51.5,-36.970124,-72.974058],[52.0,-36.970196,-72.979677],[52.5,-36.969542,-72.985232],[53.0,-36.968503,-72.990695],[53.5,-36.967116,-72.996028],[54.0,-36.965655,-73.001338],[54.5,-36.964436,-73.006731],[55.0,-36.960525,-73.008486],[55.5,-36.956361,-73.010382],[56.0,-36.952721,-73.013385],[56.5,-36.948354,-73.012139],[57.0,-36.94402,-73.010641],[57.5,-36.939656,-73.010837],[58.0,-36.935434,-73.012774],[58.5,-36.931651,-73.015737],[59.0,-36.928094,-73.019178],[59.5,-36.924534,-73.022615],[60.0,-36.920618,-73.025371],[60.5,-36.916658,-73.028035],[61.0,-36.912679,-73.030654],[61.5,-36.908349,-73.03149],[62.0,-36.903869,-73.031005],[62.5,-36.899466,-73.031977],[63.0,-36.895191,-73.03365],[63.5,-36.891233,-73.036083],[64.0,-36.886913,-73.037371],[64.5,-36.882464,-73.038006],[65.0,-36.877983,-73.038457],[65.5,-36.87413,-73.04125],[66.0,-36.86987,-73.042409],[66.5,-36.865485,-73.043613],[67.0,-36.861627,-73.04645],[67.5,-36.858075,-73.049794],[68.0,-36.853635,-73.050439],[68.5,-36.849275,-73.051814],[69.0,-36.844916,-73.053189],[69.5,-36.840614,-73.054786],[70.0,-36.836308,-73.056356],[70.5,-36.83254,-73.059237],[71.0,-36.828645,-73.061992],[71.5,-36.824423,-73.0636],[72.0,-36.820332,-73.065898],[72.5,-36.81589,-73.06645],[73.0,-36.811456,-73.066884],[73.5,-36.808351,-73.070856],[74.0,-36.805568,-73.075267],[74.5,-36.802016,-73.07858],[75.0,-36.797971,-73.081031],[75.5,-36.793925,-73.083482],[76.0,-36.789742,-73.085452],[76.5,-36.78525,-73.08556],[77.0,-36.780753,-73.085539],[77.5,-36.776257,-73.08551],[78.0,-36.77176,-73.085482],[78.5,-36.767291,-73.08591],[79.0,-36.763111,-73.087947],[79.5,-36.759022,-73.090282],[80.0,-36.754933,-73.092617],[80.5,-36.750844,-73.094951],[81.0,-36.746755,-73.097286],[81.5,-36.742708,-73.099725],[82.0,-36.739097,-73.10306],[82.5,-36.735578,-73.106552],[83.0,-36.732045,-73.110023],[83.5,-36.728508,-73.113463],[84.0,-36.725094,-73.11711],[84.5,-36.720804,-73.118491],[85.0,-36.716321,-73.118488],[85.5,-36.712377,-73.115826]],"L2":[[0.0,-36.824786,-73.06365],[0.5,-36.829032,-73.061722],[1.0,-36.830856,-73.0658],[1.5,-36.832141,-73.071214],[2.0,-36.833426,-73.076628],[2.5,-36.834711,-73.082042],[3.0,-36.835996,-73.087456],[3.5,-36.837281,-73.09287],[4.0,-36.83842,-73.098305],[4.5,-36.838122,-73.103942],[5.0,-36.837824,-73.10958],[5.5,-36.837526,-73.115217],[6.0,-36.838966,-73.120108],[6.5,-36.841972,-73.124327],[7.0,-36.844977,-73.128546],[7.5,-36.848609,-73.131389],[8.0,-36.853045,-73.132465],[8.5,-36.857483,-73.133529],[9.0,-36.861924,-73.134585],[9.5,-36.866365,-73.135641],[10.0,-36.870802,-73.136711],[10.5,-36.875239,-73.137786],[11.0,-36.879675,-73.138862],[11.5,-36.884113,-73.139936],[12.0,-36.888553,-73.141005],[12.5,-36.892994,-73.142074],[13.0,-36.897434,-73.143143],[13.5,-36.901873,-73.144212],[14.0,-36.906311,-73.145282],[14.5,-36.910749,-73.146351],[15.0,-36.915188,-73.14742],[15.5,-36.919626,-73.148489],[16.0,-36.924064,-73.149559],[16.5,-36.928502,-73.150628],[17.0,-36.932941,-73.151697],[17.5,-36.937379,-73.152767],[18.0,-36.941817,-73.153836],[18.5,-36.946255,-73.154905],[19.0,-36.950694,-73.155974],[19.5,-36.955134,-73.157033],[20.0,-36.959578,-73.158066],[20.5,-36.964022,-73.1591],[21.0,-36.968466,-73.160133],[21.5,-36.97291,-73.161166],[22.0,-36.977354,-73.162199],[22.5,-36.981825,-73.162929],[23.0,-36.986342,-73.163113],[23.5,-36.990859,-73.163089],[24.0,-36.995377,-73.16291],[24.5,-36.999854,-73.162385],[25.0,-37.004222,-73.160936],[25.5,-37.00859,-73.159487],[26.0,-37.012946,-73.157996],[26.5,-37.017004,-73.155498],[27.0,-37.021061,-73.153],[27.43,-37.024551,-73.150851]]};
+
+const ESTACIONES = {
+  L1: ['Laja','San Rosendo','Buenuraqui','Gomero','Talcamávida','Los Acacios','Valle Chanco','Unihue','San Miguel','Quilacoya','Hualqui','Omer Huet','La Leonera','Manquimávida','Pedro Medina','Chiguayante','Concepción','Lorenzo Arenas','UTFSM','Los Cóndores','Hospital Las Higueras','El Arenal','Mercado'],
+  L2: ['Concepción','Juan Pablo II','Diagonal Biobío','Alborada','Costa Mar','El Parque','Lomas Coloradas','Silva Henríquez','Hito Galvarino','Los Canelos','Huinca','Cristo Redentor','Desvío Lagunillas','Laguna Quiñenco','Coronel']
+};
+/* Sentido "creciente" = el PK sube = mismo orden que la lista de arriba. */
+const SENTIDOS = {
+  L1: [{id:'creciente', txt:'Laja → Mercado'}, {id:'decreciente', txt:'Mercado → Laja'}],
+  L2: [{id:'creciente', txt:'Concepción → Coronel'}, {id:'decreciente', txt:'Coronel → Concepción'}]
+};
+const ORIGEN_PK = { L1:'San Rosendo', L2:'Concepción' };
+const VIA_DEFECTO = { creciente:'V1', decreciente:'V2' };
+const TIPOS = ['Cruce vehicular','Cruce peatonal','Paso nivel','Puente','Túnel','Desvío / aguja','Señal','Otro'];
+const VIA_COLOR = { V1:'#3b82f6', V2:'#22c55e', V4:'#f59e0b', V8:'#d946ef', '':'#94a3b8' };
+
+/* Filtros de calidad del odómetro */
+const ACC_MAX = 25;        // m: peor que esto no suma distancia
+const JITTER_M = 6;        // m: detenido, saltos menores se ignoran
+const VEL_MAX = 45;        // m/s (162 km/h): más que esto es un salto del GPS
+
+/* ---------------------------------------------------------------- util */
+const $ = s => document.querySelector(s);
+const R = 6371008.8;
+function hav(a, b, c, d){
+  const r = Math.PI/180, dLa = (c-a)*r, dLo = (d-b)*r;
+  const h = Math.sin(dLa/2)**2 + Math.cos(a*r)*Math.cos(c*r)*Math.sin(dLo/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+const fmtKm = m => (m/1000).toLocaleString('es-CL',{minimumFractionDigits:3,maximumFractionDigits:3});
+const fmtPk = km => km==null ? '–' : km.toLocaleString('es-CL',{minimumFractionDigits:3,maximumFractionDigits:3});
+const hhmmss = t => new Date(t).toLocaleTimeString('es-CL',{hour12:false});
+function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toast.h); toast.h=setTimeout(()=>t.classList.remove('show'),1800); }
+function vibra(p){ try{ navigator.vibrate && navigator.vibrate(p); }catch(e){} }
+function esc(s){ return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+/* PK aproximado proyectando sobre el trazado de referencia */
+function pkRef(linea, lat, lon){
+  const pts = REF_TRAZADO && REF_TRAZADO[linea]; if (!pts) return null;
+  const k = Math.cos(lat*Math.PI/180)*111320, kl = 110540;
+  let best = null;
+  for (let i=0;i<pts.length-1;i++){
+    const [k0,a0,o0]=pts[i], [k1,a1,o1]=pts[i+1];
+    const x0=(o0-lon)*k, y0=(a0-lat)*kl, x1=(o1-lon)*k, y1=(a1-lat)*kl;
+    const dx=x1-x0, dy=y1-y0, L2=dx*dx+dy*dy;
+    let t = L2 ? -(x0*dx+y0*dy)/L2 : 0; t=Math.max(0,Math.min(1,t));
+    const px=x0+t*dx, py=y0+t*dy, d=Math.hypot(px,py);
+    if (!best || d<best.d) best={d, pk:k0+t*(k1-k0)};
+  }
+  return best;
+}
+
+/* ------------------------------------------------------------ IndexedDB */
+const DB = {
+  db:null,
+  open(){ return new Promise((ok,ko)=>{
+    const r = indexedDB.open('mapeo-via',1);
+    r.onupgradeneeded = () => {
+      const d=r.result;
+      d.createObjectStore('sesiones',{keyPath:'id'});
+      const p=d.createObjectStore('puntos',{autoIncrement:true}); p.createIndex('s','s');
+      const m=d.createObjectStore('marcas',{keyPath:'id'}); m.createIndex('s','s');
+    };
+    r.onsuccess = () => { DB.db=r.result; ok(); };
+    r.onerror = () => ko(r.error);
+  });},
+  tx(store, mode){ return DB.db.transaction(store, mode).objectStore(store); },
+  put(store, v){ return new Promise((ok,ko)=>{ const r=DB.tx(store,'readwrite').put(v); r.onsuccess=()=>ok(r.result); r.onerror=()=>ko(r.error); }); },
+  del(store, k){ return new Promise((ok,ko)=>{ const r=DB.tx(store,'readwrite').delete(k); r.onsuccess=()=>ok(); r.onerror=()=>ko(r.error); }); },
+  all(store){ return new Promise((ok,ko)=>{ const r=DB.tx(store,'readonly').getAll(); r.onsuccess=()=>ok(r.result); r.onerror=()=>ko(r.error); }); },
+  bySes(store, id){ return new Promise((ok,ko)=>{ const r=DB.tx(store,'readonly').index('s').getAll(id); r.onsuccess=()=>ok(r.result); r.onerror=()=>ko(r.error); }); },
+  delSes(id){ return new Promise((ok,ko)=>{
+    const t = DB.db.transaction(['sesiones','puntos','marcas'],'readwrite');
+    t.objectStore('sesiones').delete(id);
+    for (const st of ['puntos','marcas']){
+      const c = t.objectStore(st).index('s').openKeyCursor(IDBKeyRange.only(id));
+      c.onsuccess = () => { const cur=c.result; if(cur){ t.objectStore(st).delete(cur.primaryKey); cur.continue(); } };
+    }
+    t.oncomplete=()=>ok(); t.onerror=()=>ko(t.error);
+  });}
+};
+
+/* --------------------------------------------------------------- estado */
+const S = {
+  linea: localStorage.getItem('mv_linea') || 'L2',
+  sentido: localStorage.getItem('mv_sentido') || '',
+  via: localStorage.getItem('mv_via') || '',
+  tipo: 'Cruce vehicular',
+  ses: null,            // sesión activa {id, inicio, linea, ...}
+  estado: 'detenido',   // detenido | grabando | pausa
+  fix: null,            // última posición recibida
+  lastSavedTs: 0,
+  lastAcc: null,        // último punto aceptado para odómetro
+  dist: 0,              // m acumulados
+  distEst: 0,           // dist en la última estación marcada
+  pts: [],              // puntos de la sesión en memoria (para el mapa)
+  marcas: [],
+  watch: null, timer: null, wake: null
+};
+
+/* ------------------------------------------------------------------- UI */
+function pintarLinea(){
+  document.querySelectorAll('#lineas button').forEach(b=>b.classList.toggle('on', b.dataset.l===S.linea));
+  $('#sentidos').innerHTML = SENTIDOS[S.linea].map(s=>`<button data-s="${s.id}" class="${s.id===S.sentido?'on':''}">${s.txt}</button>`).join('');
+  pintarEstaciones();
+}
+function estacionesOrdenadas(){
+  const l = ESTACIONES[S.linea].slice();
+  return S.sentido==='decreciente' ? l.reverse() : l;
+}
+function pintarEstaciones(sel){
+  const cur = sel ?? $('#selEst').value;
+  const l = estacionesOrdenadas();
+  $('#selEst').innerHTML = l.map(n=>`<option ${n===cur?'selected':''}>${n}</option>`).join('') + '<option value="__otra">Otra (escribir)…</option>';
+}
+function pintarVia(){ document.querySelectorAll('#vias button').forEach(b=>b.classList.toggle('on', b.dataset.v===S.via)); }
+function pintarTipos(){
+  $('#tipos').innerHTML = TIPOS.map(t=>`<button class="${t===S.tipo?'on':''}" data-t="${t}">${t}</button>`).join('');
+  $('#lblTipo').textContent = S.tipo.split(' ')[0].toUpperCase();
+}
+function pintarEstado(){
+  const g = S.estado==='grabando', p = S.estado==='pausa';
+  $('#bStart').disabled = g;
+  $('#bStart').textContent = p ? '▶ SEGUIR' : '▶ INICIAR';
+  $('#bPause').disabled = !g;
+  $('#bStop').disabled = !(g||p);
+  $('#hdrState').textContent = g ? '● grabando' : p ? 'en pausa' : 'detenido';
+  $('#hdrState').style.color = g ? 'var(--bad)' : '';
+}
+function pintarStats(){
+  $('#sDist').textContent = fmtKm(S.dist);
+  $('#sTramo').textContent = Math.round(S.dist - S.distEst).toLocaleString('es-CL');
+  $('#sPts').textContent = S.pts.length.toLocaleString('es-CL');
+  const f = S.fix;
+  if (f){
+    $('#sAcc').textContent = Math.round(f.acc);
+    $('#gDot').className = 'gps ' + (f.acc<=10?'ok':f.acc<=ACC_MAX?'mid':'');
+    $('#sVel').textContent = f.spd!=null ? Math.round(f.spd*3.6) : '–';
+    const r = pkRef(S.linea, f.lat, f.lon);
+    $('#sPk').textContent = r && r.d<300 ? fmtPk(r.pk) : 'fuera';
+  }
+}
+
+/* ----------------------------------------------------------------- GPS */
+function iniciarGPS(){
+  if (!navigator.geolocation){ toast('Este navegador no tiene GPS'); return; }
+  if (S.watch!=null) return;
+  S.watch = navigator.geolocation.watchPosition(p=>{
+    const c=p.coords;
+    S.fix = {t:p.timestamp, lat:c.latitude, lon:c.longitude, acc:c.accuracy, spd:(c.speed==null||isNaN(c.speed))?null:c.speed, hdg:(c.heading==null||isNaN(c.heading))?null:c.heading, alt:c.altitude};
+    $('#bnr').style.display='none';
+    pintarStats();
+    if (S.estado!=='grabando') dibujar();
+  }, e=>{
+    const b=$('#bnr'); b.style.display='block';
+    b.textContent = e.code===1 ? '⚠️ Permiso de ubicación denegado. Actívalo para este sitio en el navegador.' : '⚠️ Sin señal GPS: '+e.message;
+  }, {enableHighAccuracy:true, maximumAge:0, timeout:15000});
+}
+
+/* Cada segundo: si llegó un fix nuevo, se guarda como punto. */
+async function tick(){
+  if (S.estado!=='grabando' || !S.fix) return;
+  const f = S.fix;
+  if (f.t === S.lastSavedTs) return;
+  S.lastSavedTs = f.t;
+
+  // odómetro filtrado
+  if (f.acc <= ACC_MAX){
+    const a = S.lastAcc;
+    if (!a) S.lastAcc = f;
+    else {
+      const d = hav(a.lat,a.lon,f.lat,f.lon), dt = Math.max(0.5,(f.t-a.t)/1000);
+      const quieto = (f.spd!=null && f.spd<0.8) && d < Math.max(JITTER_M, f.acc*0.6);
+      if (d/dt > VEL_MAX) { /* salto: se descarta */ }
+      else if (!quieto && d >= 1){ S.dist += d; S.lastAcc = f; }
+    }
+  }
+  const pt = {s:S.ses.id, t:f.t, lat:+f.lat.toFixed(7), lon:+f.lon.toFixed(7), acc:+f.acc.toFixed(1), spd:f.spd==null?null:+f.spd.toFixed(2), hdg:f.hdg==null?null:Math.round(f.hdg), alt:f.alt==null?null:+f.alt.toFixed(1), d:+S.dist.toFixed(1), l:S.linea, sen:S.sentido, via:S.via};
+  S.pts.push(pt);
+  DB.put('puntos', pt).catch(()=>{});
+  if (S.pts.length % 10 === 0) guardarSesion();
+  pintarStats(); dibujar();
+}
+
+async function wakeLock(on){
+  try{
+    if (on && 'wakeLock' in navigator){ S.wake = await navigator.wakeLock.request('screen'); }
+    else if (!on && S.wake){ await S.wake.release(); S.wake=null; }
+  }catch(e){}
+}
+document.addEventListener('visibilitychange', ()=>{
+  if (S.estado!=='grabando') return;
+  if (document.visibilityState==='visible'){ wakeLock(true); }
+  else marcar('evento',{nombre:'Pantalla oculta / app en segundo plano'}, true);
+});
+
+/* -------------------------------------------------------------- sesión */
+function guardarSesion(){
+  if (!S.ses) return;
+  Object.assign(S.ses, {fin:Date.now(), dist:+S.dist.toFixed(1), npts:S.pts.length, linea:S.linea, estado:S.estado});
+  return DB.put('sesiones', S.ses);
+}
+async function start(){
+  if (!S.sentido){ toast('Elige el sentido primero'); return; }
+  if (!S.via){ toast('Elige la vía primero'); return; }
+  iniciarGPS();
+  if (!S.ses){
+    const now = Date.now();
+    S.ses = {id:'R'+now, inicio:now, fin:now, linea:S.linea, dist:0, npts:0, estado:'grabando'};
+    S.pts=[]; S.marcas=[]; S.dist=0; S.distEst=0; S.lastAcc=null; S.lastSavedTs=0;
+    await DB.put('sesiones', S.ses);
+    marcar('inicio',{nombre:'Inicio recorrido'}, true);
+  } else marcar('evento',{nombre:'Reanuda'}, true);
+  S.estado='grabando';
+  clearInterval(S.timer); S.timer = setInterval(tick, 1000);
+  wakeLock(true); pintarEstado(); pintarMarcas(); pintarSesiones();
+  localStorage.setItem('mv_activa', S.ses.id);
+  vibra(80);
+}
+function pausa(){
+  S.estado='pausa'; S.lastAcc=null;
+  marcar('evento',{nombre:'Pausa'}, true);
+  guardarSesion(); pintarEstado();
+}
+async function stop(){
+  if (!confirm('¿Terminar y guardar este recorrido?')) return;
+  marcar('fin',{nombre:'Fin recorrido'}, true);
+  S.estado='detenido'; clearInterval(S.timer);
+  await guardarSesion();
+  localStorage.removeItem('mv_activa');
+  wakeLock(false);
+  S.ses=null; pintarEstado(); pintarSesiones();
+  toast('Recorrido guardado ✔'); vibra([60,60,60]);
+}
+
+/* Recupera un recorrido que quedó abierto (página cerrada o recargada). */
+async function recuperar(){
+  const id = localStorage.getItem('mv_activa'); if (!id) return;
+  const ses = (await DB.all('sesiones')).find(s=>s.id===id); if (!ses) return;
+  S.ses = ses; S.linea = ses.linea || S.linea;
+  S.pts = (await DB.bySes('puntos', id)).sort((a,b)=>a.t-b.t);
+  S.marcas = (await DB.bySes('marcas', id)).sort((a,b)=>a.t-b.t);
+  const last = S.pts[S.pts.length-1];
+  S.dist = last ? last.d : 0;
+  const le = [...S.marcas].reverse().find(m=>m.tipo==='estacion'); S.distEst = le ? le.d : 0;
+  S.estado='pausa';
+  pintarLinea(); pintarEstado(); pintarMarcas(); pintarStats(); dibujar(true);
+  toast('Recorrido recuperado: toca SEGUIR');
+}
+
+/* --------------------------------------------------------------- marcas */
+function marcar(tipo, extra, silencioso){
+  if (!S.ses){ if(!silencioso) toast('Primero toca INICIAR'); return null; }
+  const f = S.fix;
+  if (!f){ if(!silencioso) toast('Aún no hay GPS'); if(tipo!=='evento'&&tipo!=='inicio'&&tipo!=='fin') return null; }
+  const m = Object.assign({
+    id:'M'+Date.now()+Math.random().toString(36).slice(2,5), s:S.ses.id, t:Date.now(), tipo,
+    lat:f?+f.lat.toFixed(7):null, lon:f?+f.lon.toFixed(7):null, acc:f?+f.acc.toFixed(1):null,
+    d:+S.dist.toFixed(1), l:S.linea, sen:S.sentido, via:S.via
+  }, extra||{});
+  if (f){ const r=pkRef(S.linea,f.lat,f.lon); m.pkRef = r && r.d<300 ? +r.pk.toFixed(3) : null; }
+  S.marcas.push(m); DB.put('marcas', m);
+  pintarMarcas(); dibujar();
+  if (!silencioso){ vibra(120); }
+  return m;
+}
+function marcarEstacion(){
+  let n = $('#selEst').value;
+  if (n==='__otra'){ n = prompt('Nombre de la estación / lugar:'); if(!n) return; }
+  const m = marcar('estacion',{nombre:n}); if (!m) return;
+  S.distEst = S.dist;
+  toast('📍 '+n+(m.acc?` (±${Math.round(m.acc)} m)`:''));
+  $('#bEst').classList.add('flash'); setTimeout(()=>$('#bEst').classList.remove('flash'),500);
+  const l = estacionesOrdenadas(), i = l.indexOf(n);
+  if (i>=0 && i<l.length-1) pintarEstaciones(l[i+1]);
+}
+function marcarCruce(){
+  const nom = $('#inNom').value.trim();
+  const m = marcar('cruce',{subtipo:S.tipo, nombre:nom}); if (!m) return;
+  $('#inNom').value='';
+  toast('✚ '+S.tipo+(nom?': '+nom:''));
+}
+function cambiarVia(v){
+  if (v===S.via) return;
+  const ant = S.via; S.via = v; localStorage.setItem('mv_via', v); pintarVia();
+  if (S.ses && S.estado!=='detenido'){ marcar('cambio_via',{nombre:`${ant||'–'} → ${v}`, desde:ant, hacia:v}); toast(`Cambio de vía ${ant||'–'} → ${v}`); }
+}
+function cambiarSentido(s){
+  if (s===S.sentido) return;
+  const ant=S.sentido; S.sentido=s; localStorage.setItem('mv_sentido', s);
+  if (!S.via){ S.via = VIA_DEFECTO[s]; localStorage.setItem('mv_via', S.via); pintarVia(); }
+  pintarLinea();
+  const l = estacionesOrdenadas(); pintarEstaciones(l[0]);
+  if (S.ses && S.estado!=='detenido') marcar('cambio_sentido',{nombre:SENTIDOS[S.linea].find(x=>x.id===s).txt, desde:ant, hacia:s});
+}
+function cambiarLinea(l){
+  if (l===S.linea) return;
+  const ant=S.linea; S.linea=l; S.sentido=''; localStorage.setItem('mv_linea', l); localStorage.removeItem('mv_sentido');
+  pintarLinea();
+  if (S.ses && S.estado!=='detenido') marcar('cambio_linea',{nombre:`${ant} → ${l}`});
+  dibujar(true);
+}
+async function borrarMarca(id){
+  S.marcas = S.marcas.filter(m=>m.id!==id); await DB.del('marcas', id); pintarMarcas(); dibujar();
+}
+async function renombrarMarca(id){
+  const m = S.marcas.find(x=>x.id===id); if(!m) return;
+  const n = prompt('Nombre:', m.nombre||''); if (n==null) return;
+  m.nombre = n.trim(); await DB.put('marcas', m); pintarMarcas();
+}
+function pintarMarcas(){
+  const vis = S.marcas.filter(m=>m.tipo!=='evento').slice().reverse();
+  const ico = {estacion:'📍',cruce:'✚',cambio_via:'🔀',cambio_sentido:'↔️',cambio_linea:'🛤️',inicio:'▶',fin:'⏹'};
+  $('#marks').innerHTML = vis.length ? vis.map(m=>`<li>
+      <div class="t">${ico[m.tipo]||'•'} <b>${esc(m.nombre|| (m.subtipo||m.tipo))}</b>
+        <small><span class="tag" style="background:${VIA_COLOR[m.via||'']}">${m.via||'–'}</span>${m.subtipo&&m.nombre?esc(m.subtipo)+' · ':''}${hhmmss(m.t)} · ${fmtKm(m.d)} km${m.acc!=null?` · ±${Math.round(m.acc)} m`:''}${m.pkRef!=null?` · PK≈${fmtPk(m.pkRef)}`:''}</small></div>
+      ${m.tipo==='cruce'||m.tipo==='estacion'?`<button data-ren="${m.id}">✎</button>`:''}
+      ${m.tipo!=='inicio'&&m.tipo!=='fin'?`<button data-del="${m.id}">✕</button>`:''}
+    </li>`).join('') : '<li class="hint">Sin marcas todavía.</li>';
+  pintarResumen(S.pts, S.marcas, $('#resumen'));
+}
+
+/* --------------------------------------------------- tramos y PK medido */
+/* Divide el recorrido en "tramos" de un mismo sentido y línea, y a cada uno
+   le calcula el PK medido: se ancla en la estación origen (PK 0) si está
+   marcada; si no, en la estación marcada con el PK de referencia de la
+   bitácora. PK = ancla ± (distancia recorrida − distancia en el ancla). */
+function tramos(pts, marcas){
+  const res=[]; let cur=null;
+  for (const p of pts){
+    if (!p.sen){ continue; }
+    if (!cur || cur.l!==p.l || cur.sen!==p.sen){ cur={l:p.l, sen:p.sen, pts:[], marcas:[]}; res.push(cur); }
+    cur.pts.push(p);
+  }
+  res.forEach((tr,i)=>{
+    // la marca usa el reloj del teléfono y el punto el del GPS: se da holgura
+    const t0 = i ? tr.pts[0].t-5000 : -Infinity, t1 = i<res.length-1 ? res[i+1].pts[0].t-5000 : Infinity;
+    tr.marcas = marcas.filter(m=>m.t>=t0 && m.t<t1 && m.l===tr.l && m.sen===tr.sen && ['estacion','cruce','cambio_via'].includes(m.tipo));
+    tr.largo = tr.pts[tr.pts.length-1].d - tr.pts[0].d;
+    const sign = tr.sen==='decreciente' ? -1 : 1;
+    const ests = tr.marcas.filter(m=>m.tipo==='estacion');
+    let ancla = ests.find(m=>m.nombre===ORIGEN_PK[tr.l]);
+    if (ancla){ tr.ancla={nombre:ancla.nombre, d:ancla.d, pk:0, tipo:'origen'}; }
+    else {
+      ancla = ests.find(m=>m.pkRef!=null);
+      if (ancla) tr.ancla={nombre:ancla.nombre, d:ancla.d, pk:ancla.pkRef, tipo:'referencia'};
+    }
+    const pkDe = d => tr.ancla ? +(tr.ancla.pk + sign*(d - tr.ancla.d)/1000).toFixed(3) : null;
+    tr.pkDe = pkDe;
+    tr.marcas = tr.marcas.map(m=>Object.assign({}, m, {pk:pkDe(m.d)}));
+  });
+  return res;
+}
+function pintarResumen(pts, marcas, el){
+  const trs = tramos(pts, marcas).filter(t=>t.marcas.some(m=>m.tipo==='estacion'));
+  if (!trs.length){ el.innerHTML='<p class="hint">Aparece al marcar estaciones.</p>'; return; }
+  el.innerHTML = trs.map(tr=>{
+    const ests = tr.marcas.filter(m=>m.tipo==='estacion');
+    const sen = SENTIDOS[tr.l].find(s=>s.id===tr.sen).txt;
+    let prev=null;
+    const filas = ests.map(m=>{
+      const dif = (m.pk!=null && m.pkRef!=null) ? Math.round((m.pk-m.pkRef)*1000) : null;
+      const entre = prev ? Math.round(m.d-prev.d) : null; prev=m;
+      return `<tr><td>${esc(m.nombre)}</td><td class="n">${entre==null?'–':entre.toLocaleString('es-CL')}</td><td class="n"><b>${fmtPk(m.pk)}</b></td><td class="n">${fmtPk(m.pkRef)}</td><td class="n">${dif==null?'–':(dif>0?'+':'')+dif}</td></tr>`;
+    }).join('');
+    return `<p style="margin:4px 0 6px"><b>${tr.l} · ${sen}</b> · ${fmtKm(tr.largo)} km<br><span class="hint">${tr.ancla?`PK anclado en ${esc(tr.ancla.nombre)} (${tr.ancla.tipo==='origen'?'PK 0 exacto':'PK de la bitácora'})`:'Sin ancla: marca una estación'}</span></p>
+      <table><tr><th>Estación</th><th class="n">m desde ant.</th><th class="n">PK medido</th><th class="n">PK bitác.</th><th class="n">dif m</th></tr>${filas}</table>`;
+  }).join('<hr style="border-color:var(--line)">');
+}
+
+/* ----------------------------------------------------------------- mapa */
+const V = {cx:null, cy:null, esc:null, follow:true};
+function dibujar(fit){
+  const cv=$('#map'), dpr=devicePixelRatio||1, W=cv.clientWidth, H=cv.clientHeight;
+  if (cv.width!==W*dpr){ cv.width=W*dpr; cv.height=H*dpr; }
+  const g=cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+  const ref = (REF_TRAZADO&&REF_TRAZADO[S.linea])||[];
+  const kx = Math.cos(-37*Math.PI/180);
+  if (fit || V.esc==null){
+    const src = S.pts.length>1 ? S.pts.map(p=>[p.lat,p.lon]) : ref.map(r=>[r[1],r[2]]);
+    if (src.length){
+      let a=Infinity,b=-Infinity,c=Infinity,d=-Infinity;
+      for (const [la,lo] of src){ a=Math.min(a,la); b=Math.max(b,la); c=Math.min(c,lo); d=Math.max(d,lo); }
+      V.cy=(a+b)/2; V.cx=(c+d)/2;
+      V.esc = Math.min(W/Math.max((d-c)*kx,0.0005), H/Math.max(b-a,0.0005))*0.9;
+    }
+  }
+  if (V.follow && S.fix && !fit && S.estado==='grabando'){ V.cy=S.fix.lat; V.cx=S.fix.lon; if (V.esc<20000) V.esc=40000; }
+  if (V.esc==null) return;
+  const X = lo => W/2 + (lo-V.cx)*kx*V.esc, Y = la => H/2 - (la-V.cy)*V.esc;
+  g.lineWidth=3; g.strokeStyle='#3b4766'; g.beginPath();
+  ref.forEach((r,i)=> i?g.lineTo(X(r[2]),Y(r[1])):g.moveTo(X(r[2]),Y(r[1]))); g.stroke();
+  g.lineWidth=3;
+  for (let i=1;i<S.pts.length;i++){
+    const a=S.pts[i-1], b=S.pts[i];
+    g.strokeStyle = VIA_COLOR[b.via||'']; g.globalAlpha = b.acc>ACC_MAX?0.35:1;
+    g.beginPath(); g.moveTo(X(a.lon),Y(a.lat)); g.lineTo(X(b.lon),Y(b.lat)); g.stroke();
+  }
+  g.globalAlpha=1;
+  g.font='12px system-ui';
+  for (const m of S.marcas){
+    if (m.lat==null || m.l!==S.linea) continue;
+    const x=X(m.lon), y=Y(m.lat);
+    if (m.tipo==='estacion'){ g.fillStyle='#fff'; g.beginPath(); g.arc(x,y,5,0,7); g.fill(); g.fillText(m.nombre,x+8,y+4); }
+    else if (m.tipo==='cruce'){ g.fillStyle='#fb923c'; g.beginPath(); g.moveTo(x,y-6); g.lineTo(x+6,y); g.lineTo(x,y+6); g.lineTo(x-6,y); g.fill(); }
+    else if (m.tipo==='cambio_via'){ g.fillStyle=VIA_COLOR[m.hacia]||'#fff'; g.beginPath(); g.moveTo(x,y-7); g.lineTo(x+6,y+5); g.lineTo(x-6,y+5); g.fill(); }
+  }
+  if (S.fix){
+    const x=X(S.fix.lon), y=Y(S.fix.lat);
+    g.fillStyle='rgba(239,68,68,.25)'; g.beginPath(); g.arc(x,y,Math.max(6,S.fix.acc*V.esc/111320),0,7); g.fill();
+    g.fillStyle='#ef4444'; g.beginPath(); g.arc(x,y,5,0,7); g.fill();
+  }
+}
+(function(){ // zoom con dos dedos / rueda, arrastre
+  const cv=$('#map'); let t0=null;
+  const kx = Math.cos(-37*Math.PI/180);
+  cv.addEventListener('wheel',e=>{ e.preventDefault(); if(V.esc){ V.esc*=e.deltaY<0?1.25:0.8; dibujar(); } },{passive:false});
+  cv.addEventListener('pointerdown',e=>{ t0={x:e.clientX,y:e.clientY,cx:V.cx,cy:V.cy}; cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener('pointermove',e=>{ if(!t0||!V.esc) return; V.follow=false; $('#bFollow').classList.remove('on');
+    V.cx = t0.cx - (e.clientX-t0.x)/(kx*V.esc); V.cy = t0.cy + (e.clientY-t0.y)/V.esc; dibujar(); });
+  cv.addEventListener('pointerup',()=>t0=null);
+  let pd=null;
+  cv.addEventListener('touchmove',e=>{ if(e.touches.length===2){ const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY); if(pd&&V.esc){ V.esc*=d/pd; dibujar(); } pd=d; t0=null; } },{passive:true});
+  cv.addEventListener('touchend',()=>pd=null);
+})();
+
+/* -------------------------------------------------------------- exportar */
+async function datosSesion(id){
+  const ses = (await DB.all('sesiones')).find(s=>s.id===id);
+  const pts = (await DB.bySes('puntos', id)).sort((a,b)=>a.t-b.t);
+  const marcas = (await DB.bySes('marcas', id)).sort((a,b)=>a.t-b.t);
+  return {ses, pts, marcas};
+}
+function nombreArchivo(ses, ext){
+  const d=new Date(ses.inicio), p=n=>String(n).padStart(2,'0');
+  return `mapeo_${ses.linea}_${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.${ext}`;
+}
+/* Trazado medido: se remuestrea cada 20 m sobre los puntos buenos, con PK. */
+function trazadoMedido(tr, paso=20){
+  const buenos = tr.pts.filter(p=>p.acc<=ACC_MAX);
+  if (buenos.length<2 || !tr.ancla) return [];
+  const out=[]; let sig = Math.ceil(buenos[0].d/paso)*paso;
+  for (let i=1;i<buenos.length;i++){
+    const a=buenos[i-1], b=buenos[i];
+    while (sig<=b.d && b.d>a.d){
+      const f=(sig-a.d)/(b.d-a.d);
+      out.push([tr.pkDe(sig), +(a.lat+f*(b.lat-a.lat)).toFixed(6), +(a.lon+f*(b.lon-a.lon)).toFixed(6), a.via||b.via]);
+      sig+=paso;
+    }
+  }
+  if (tr.sen==='decreciente') out.reverse();
+  return out;
+}
+async function exportar(id, fmt){
+  const {ses, pts, marcas} = await datosSesion(id);
+  let txt, mime, ext;
+  if (fmt==='json'){
+    const trs = tramos(pts, marcas).map(tr=>({
+      linea:tr.l, sentido:tr.sen, largo_m:+tr.largo.toFixed(1), ancla:tr.ancla||null,
+      estaciones: tr.marcas.filter(m=>m.tipo==='estacion').map(m=>({nombre:m.nombre, pk:m.pk, pk_bitacora:m.pkRef, lat:m.lat, lon:m.lon, precision_m:m.acc, via:m.via, hora:new Date(m.t).toISOString()})),
+      cruces: tr.marcas.filter(m=>m.tipo==='cruce').map(m=>({tipo:m.subtipo, nombre:m.nombre, pk:m.pk, pk_bitacora:m.pkRef, lat:m.lat, lon:m.lon, precision_m:m.acc, via:m.via, hora:new Date(m.t).toISOString()})),
+      cambios_via: tr.marcas.filter(m=>m.tipo==='cambio_via').map(m=>({desde:m.desde, hacia:m.hacia, pk:m.pk, lat:m.lat, lon:m.lon, precision_m:m.acc, hora:new Date(m.t).toISOString()})),
+      trazado_cada_20m: trazadoMedido(tr)   // [pk, lat, lon, via]
+    }));
+    txt = JSON.stringify({app:'mapeo-via', version:1, recorrido:ses, tramos:trs, marcas, puntos:pts.map(({s,...p})=>p)});
+    mime='application/json'; ext='json';
+  } else if (fmt==='csv'){
+    const h='hora,lat,lon,precision_m,vel_kmh,rumbo,alt,dist_m,linea,sentido,via,marca_tipo,marca_nombre';
+    const idx = new Map(); marcas.forEach(m=>{ const k=Math.round(m.t/1000); idx.set(k,(idx.get(k)||[]).concat(m)); });
+    const rows = pts.map(p=>{
+      const ms = idx.get(Math.round(p.t/1000))||[];
+      const mm = ms.filter(m=>m.tipo!=='evento');
+      return [new Date(p.t).toISOString(),p.lat,p.lon,p.acc,p.spd==null?'':(p.spd*3.6).toFixed(1),p.hdg??'',p.alt??'',p.d,p.l,p.sen,p.via,
+        mm.map(m=>m.tipo).join('|'), '"'+mm.map(m=>(m.subtipo?m.subtipo+': ':'')+(m.nombre||'')).join('|').replace(/"/g,'""')+'"'].join(',');
+    });
+    txt = '﻿'+h+'\n'+rows.join('\n'); mime='text/csv'; ext='csv';
+  } else {
+    const feats = [];
+    const porVia=[]; let cur=null;
+    for (const p of pts){ if(!cur||cur.via!==p.via){ cur={via:p.via,c:cur?[cur.c[cur.c.length-1]]:[]}; porVia.push(cur);} cur.c.push([p.lon,p.lat]); }
+    porVia.forEach(s=>s.c.length>1&&feats.push({type:'Feature',properties:{via:s.via,stroke:VIA_COLOR[s.via||'']},geometry:{type:'LineString',coordinates:s.c}}));
+    marcas.filter(m=>m.lat!=null&&m.tipo!=='evento').forEach(m=>feats.push({type:'Feature',properties:{tipo:m.tipo,subtipo:m.subtipo||'',nombre:m.nombre||'',via:m.via,dist_m:m.d,precision_m:m.acc,hora:new Date(m.t).toISOString()},geometry:{type:'Point',coordinates:[m.lon,m.lat]}}));
+    txt = JSON.stringify({type:'FeatureCollection',features:feats}); mime='application/geo+json'; ext='geojson';
+  }
+  const nombre = nombreArchivo(ses, ext);
+  const file = new File([txt], nombre, {type:mime});
+  if (navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await navigator.share({files:[file], title:nombre}); return; }catch(e){ if(e.name==='AbortError') return; }
+  }
+  const a=document.createElement('a'); a.href=URL.createObjectURL(file); a.download=nombre; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+}
+async function pintarSesiones(){
+  const ses = (await DB.all('sesiones')).sort((a,b)=>b.inicio-a.inicio);
+  $('#sessions').innerHTML = ses.length ? ses.map(s=>`<li style="flex-wrap:wrap">
+    <div class="t" style="flex-basis:100%"><b>${s.linea} · ${new Date(s.inicio).toLocaleDateString('es-CL')} ${hhmmss(s.inicio)}–${hhmmss(s.fin)}</b>
+      <small>${fmtKm(s.dist||0)} km · ${(s.npts||0).toLocaleString('es-CL')} puntos${S.ses&&S.ses.id===s.id?' · <b style="color:var(--bad)">EN CURSO</b>':''}</small></div>
+    <button data-exp="${s.id}" data-f="json">⬇ JSON completo</button>
+    <button data-exp="${s.id}" data-f="csv">⬇ CSV</button>
+    <button data-exp="${s.id}" data-f="geojson">⬇ GeoJSON</button>
+    <button data-ver="${s.id}">👁 Ver</button>
+    ${S.ses&&S.ses.id===s.id?'':`<button data-bor="${s.id}">🗑</button>`}
+  </li>`).join('') : '<li class="hint">Aún no hay recorridos.</li>';
+}
+async function verSesion(id){
+  if (S.ses){ toast('Termina el recorrido en curso primero'); return; }
+  const {ses, pts, marcas} = await datosSesion(id);
+  S.pts=pts; S.marcas=marcas; S.dist=pts.length?pts[pts.length-1].d:0; S.distEst=S.dist;
+  S.linea = ses.linea; pintarLinea(); pintarMarcas(); pintarStats(); dibujar(true);
+  window.scrollTo({top:$('#map').offsetTop-160, behavior:'smooth'});
+}
+
+/* ------------------------------------------------------------- eventos */
+$('#lineas').onclick = e=>{ const b=e.target.closest('button'); if(b) cambiarLinea(b.dataset.l); };
+$('#sentidos').onclick = e=>{ const b=e.target.closest('button'); if(b) cambiarSentido(b.dataset.s); };
+$('#vias').onclick = e=>{ const b=e.target.closest('button'); if(b) cambiarVia(b.dataset.v); };
+$('#tipos').onclick = e=>{ const b=e.target.closest('button'); if(b){ S.tipo=b.dataset.t; pintarTipos(); } };
+$('#bStart').onclick = start; $('#bPause').onclick = pausa; $('#bStop').onclick = stop;
+$('#bEst').onclick = marcarEstacion; $('#bCruce').onclick = marcarCruce;
+$('#bFit').onclick = ()=>{ V.follow=false; $('#bFollow').classList.remove('on'); dibujar(true); };
+$('#bFollow').onclick = ()=>{ V.follow=!V.follow; $('#bFollow').classList.toggle('on',V.follow); dibujar(); };
+$('#bUndo').onclick = ()=>{ const m=[...S.marcas].reverse().find(x=>['estacion','cruce','cambio_via'].includes(x.tipo)); if(m && confirm(`¿Borrar "${m.nombre||m.subtipo||m.tipo}"?`)) borrarMarca(m.id); };
+$('#marks').onclick = e=>{ const b=e.target.closest('button'); if(!b) return;
+  if (b.dataset.del && confirm('¿Borrar esta marca?')) borrarMarca(b.dataset.del);
+  if (b.dataset.ren) renombrarMarca(b.dataset.ren); };
+$('#sessions').onclick = async e=>{ const b=e.target.closest('button'); if(!b) return;
+  if (b.dataset.exp){ if (S.ses&&S.ses.id===b.dataset.exp) await guardarSesion(); exportar(b.dataset.exp, b.dataset.f); }
+  if (b.dataset.ver) verSesion(b.dataset.ver);
+  if (b.dataset.bor && confirm('¿Borrar este recorrido del teléfono? Exporta antes si lo necesitas.')){ await DB.delSes(b.dataset.bor); pintarSesiones(); } };
+window.addEventListener('resize', ()=>dibujar());
+window.addEventListener('beforeunload', e=>{ if (S.estado==='grabando'){ guardarSesion(); e.preventDefault(); e.returnValue=''; } });
+
+/* --------------------------------------------------------------- inicio */
+(async function(){
+  await DB.open();
+  pintarLinea(); pintarVia(); pintarTipos(); pintarEstado(); pintarMarcas();
+  dibujar(true);
+  await recuperar();
+  pintarSesiones();
+  iniciarGPS();
+  if ('storage' in navigator && navigator.storage.persist) navigator.storage.persist().catch(()=>{});
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+})();
+</script>
+</body>
+</html>
