@@ -12,6 +12,9 @@ prevenciones de la bitácora por uno medido en terreno.
 - **Sentido**: Concepción → Coronel / Coronel → Concepción (L2) y Laja ↔ Mercado (L1).
 - **Estaciones**: eliges y tocas *Marcar estación*; salta sola a la siguiente del sentido.
 - **Cruces y puntos**: cruce vehicular, peatonal, paso nivel, puente, túnel, desvío, señal u otro, con nombre opcional.
+- **Prevenciones**: botón **INICIO** al entrar y **FIN** al salir, con el PK del boletín de cada extremo (ej. PK 6 P1 → PK 6 P30) y la restricción. Los PK se escriben antes, durante o después. La tabla compara el largo del boletín con el medido.
+- **Postes sueltos**: marca un poste cualquiera y anota su PK.
+- **PK calibrado**: cada poste con PK del boletín (postes sueltos e inicio/fin de prevenciones) corrige el PK de todo el recorrido: entre dos postes se interpola por distancia recorrida y fuera de ellos se extrapola desde el más cercano. Un PK que no calza con el sentido de marcha se marca en rojo y no se usa. Convención del boletín: PK 6 P30 = 6,30.
 - **Distancia, dos medidas**: `d` integra la velocidad que mide el GPS (no suma el temblor de posición con el tren detenido) y `dg` suma las posiciones tal cual, sin filtro.
 - **PK medido**: se ancla en Concepción (L2) o San Rosendo (L1) = PK 0 si está marcada; si no, en la primera estación marcada usando el PK de la bitácora. La tabla *Medición por tramo* compara PK medido vs. PK de la bitácora.
 - Todo se guarda en el teléfono (IndexedDB) y se recupera si se cierra la página.
@@ -23,7 +26,7 @@ En *Recorridos guardados*:
 
 | Archivo | Contenido |
 |---|---|
-| **JSON completo** | Todos los puntos segundo a segundo con su PK medido, más los tramos con estaciones, cruces y cambios de vía con PK |
+| **JSON completo** | Todos los puntos segundo a segundo con su PK calibrado, más los tramos con estaciones, cruces, cambios de vía, prevenciones (inicio/fin, largo boletín vs. medido) y postes, cada uno con PK del boletín, PK medido y PK sin calibrar |
 | **CSV** | Un punto por fila, abre en Excel |
 | **GeoJSON** | Para verlo en Google My Maps, geojson.io o QGIS |
 

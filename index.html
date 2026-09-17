@@ -66,6 +66,20 @@ td.n,th.n{text-align:right}
 .flash{animation:fl .5s}
 @keyframes fl{0%{background:#fff}100%{}}
 details summary{cursor:pointer;font-weight:700;padding:4px 0}
+.mark-pv{background:#7f1d1d;border-color:#f87171}
+.mark-pv.abierta{animation:late 1.2s infinite}
+@keyframes late{50%{background:#b91c1c;border-color:#fff}}
+.pkgrid{display:grid;grid-template-columns:auto 1fr auto 1fr;gap:6px 8px;align-items:center;margin-bottom:8px}
+.pkgrid b{font-size:13px;color:var(--mut)}
+.pkgrid span{font-weight:700;text-align:right}
+.pkgrid input{text-align:center;font-size:20px;font-weight:700;padding:8px}
+.prev-on{background:#450a0a;border:1px solid #f87171;border-radius:10px;padding:8px 10px;margin-top:8px;font-weight:700;display:none}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:40;display:none;align-items:flex-end;justify-content:center;padding:12px}
+.modal.show{display:flex}
+.modal .box{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px;width:100%;max-width:480px}
+.modal h3{margin:0 0 10px;font-size:16px}
+.modal label{display:block;font-size:13px;color:var(--mut);margin-bottom:8px}
+.modal label input{margin-top:4px}
 </style>
 </head>
 <body>
@@ -132,13 +146,29 @@ details summary{cursor:pointer;font-weight:700;padding:4px 0}
 </section>
 
 <section class="card">
+  <h2>Prevenciones y postes</h2>
+  <div class="pkgrid">
+    <b>INICIO&nbsp;PK</b><input id="piKm" inputmode="numeric" placeholder="6"><span>P</span><input id="piP" inputmode="numeric" placeholder="1">
+    <b>FIN&nbsp;PK</b><input id="pfKm" inputmode="numeric" placeholder="6"><span>P</span><input id="pfP" inputmode="numeric" placeholder="30">
+  </div>
+  <input id="pNota" placeholder="Restricción (opcional): ej. 30 km/h V1">
+  <div class="row" style="margin-top:8px">
+    <button class="big mark-pv" id="bPrevIni">⚠️ INICIO</button>
+    <button class="big mark-pv" id="bPrevFin" disabled>🏁 FIN</button>
+  </div>
+  <div class="prev-on" id="prevOn"></div>
+  <div class="row" style="margin-top:8px"><button id="bPoste">📌 Marcar poste suelto</button></div>
+  <p class="hint">Poste = centésima de km, como en el boletín: PK 6 P1 = 6,01 y PK 6 P30 = 6,30. Los PK se pueden escribir antes, durante o después (✎ en la lista). Cada poste con PK corrige el PK medido de todo el recorrido.</p>
+</section>
+
+<section class="card">
   <h2>Mapa del recorrido</h2>
   <canvas id="map"></canvas>
   <div class="row" style="margin-top:8px">
     <button id="bFit">Ajustar vista</button>
     <button id="bFollow" class="on">Seguir tren</button>
   </div>
-  <p class="hint">Gris: trazado aproximado de la bitácora. Color: lo grabado (azul V1, verde V2, ámbar V4, fucsia V8). ● estación, ◆ cruce, ▲ cambio de vía.</p>
+  <p class="hint">Gris: trazado aproximado de la bitácora. Color: lo grabado (azul V1, verde V2, ámbar V4, fucsia V8). ● estación, ◆ cruce, ▲ cambio de vía, ■ inicio/fin de prevención (franja roja), amarillo: poste.</p>
 </section>
 
 <section class="card">
@@ -157,6 +187,12 @@ details summary{cursor:pointer;font-weight:700;padding:4px 0}
   <ul class="list" id="sessions"></ul>
   <p class="hint">Todo queda guardado en el teléfono aunque cierres la página. Exporta y envíate el archivo al terminar.</p>
 </section>
+
+<div class="modal" id="modal"><div class="box">
+  <h3 id="mTit"></h3>
+  <div id="mCampos"></div>
+  <div class="row"><button id="mNo">Cancelar</button><button id="mOk" class="go">Guardar</button></div>
+</div></div>
 
 <div class="toast" id="toast"></div>
 
@@ -187,6 +223,32 @@ const ORIGEN_PK = { L1:'San Rosendo', L2:'Concepción' };
 const VIA_DEFECTO = { creciente:'V1', decreciente:'V2' };
 const TIPOS = ['Cruce vehicular','Cruce peatonal','Paso nivel','Puente','Túnel','Desvío / aguja','Señal','Otro'];
 const VIA_COLOR = { V1:'#3b82f6', V2:'#22c55e', V4:'#f59e0b', V8:'#d946ef', '':'#94a3b8' };
+
+/* Marcas que pertenecen a un tramo y se exportan con PK */
+const TIPOS_TRAMO = ['estacion','cruce','cambio_via','prev_inicio','prev_fin','poste'];
+
+/* PK del boletín: el poste se lee como centésima de km (27 P. 41 = 27,41),
+   igual que en las prevenciones de la bitácora. Se guardan km y poste por
+   separado, para poder reinterpretarlos si hiciera falta. */
+function pkDecl(km, poste){
+  const k = parseInt(km,10); if (isNaN(k)) return null;
+  const p = parseInt(poste,10), pp = isNaN(p) ? 0 : p;
+  return {km:k, poste:pp, v:+(k + pp/100).toFixed(2)};
+}
+function parsePk(txt){
+  const s = String(txt||'').toUpperCase().replace(/PK/g,' ');
+  let m = s.match(/(\d+)\s*P\s*\.?\s*(\d+)/); if (m) return pkDecl(m[1], m[2]);
+  m = s.match(/(\d+)(?:[.,](\d{1,3}))?/); if (!m) return null;
+  const v = parseFloat(m[1]+'.'+(m[2]||'0'));
+  return {km:Math.floor(v), poste:Math.round((v-Math.floor(v))*100), v:+v.toFixed(3)};
+}
+const pkTxt = p => p ? `PK ${p.km} P${p.poste}` : '';
+function etiqueta(m){
+  if (m.tipo==='prev_inicio') return `Inicio prevención ${pkTxt(m.pkDecl)||'(sin PK)'}${m.nota?' · '+m.nota:''}`;
+  if (m.tipo==='prev_fin') return `Fin prevención ${pkTxt(m.pkDecl)||'(sin PK)'}`;
+  if (m.tipo==='poste') return `Poste ${pkTxt(m.pkDecl)||'(sin PK)'}${m.nota?' · '+m.nota:''}`;
+  return m.nombre || m.subtipo || m.tipo;
+}
 
 /* Solo para pintar: no descarta ningún punto ni metro */
 const ACC_MAX = 25;        // m: precisión peor que esto se dibuja atenuada
@@ -268,6 +330,7 @@ const S = {
   distEst: 0,           // dist en la última estación marcada
   pts: [],              // puntos de la sesión en memoria (para el mapa)
   marcas: [],
+  prevAbierta: null,    // marca de inicio de la prevención en curso
   watch: null, timer: null, wake: null
 };
 
@@ -304,6 +367,11 @@ function pintarStats(){
   $('#sDist').textContent = fmtKm(S.dist);
   $('#sTramo').textContent = Math.round(S.dist - S.distEst).toLocaleString('es-CL');
   $('#sPts').textContent = S.pts.length.toLocaleString('es-CL');
+  const pa = S.prevAbierta, on = $('#prevOn');
+  on.style.display = pa ? 'block' : 'none';
+  if (pa) on.textContent = `⚠️ Prevención en curso desde ${pkTxt(pa.pkDecl)||'el inicio'}: ${Math.round(S.dist-pa.d).toLocaleString('es-CL')} m`;
+  $('#bPrevIni').disabled = !!pa; $('#bPrevFin').disabled = !pa;
+  $('#bPrevFin').classList.toggle('abierta', !!pa);
   const f = S.fix;
   if (f){
     $('#sAcc').textContent = Math.round(f.acc);
@@ -398,8 +466,9 @@ function pausa(){
   guardarSesion(); pintarEstado();
 }
 async function stop(){
-  if (!confirm('¿Terminar y guardar este recorrido?')) return;
+  if (!await confirmar('¿Terminar y guardar este recorrido?'+(S.prevAbierta?' Hay una prevención sin FIN: quedará abierta.':''), 'Terminar')) return;
   marcar('fin',{nombre:'Fin recorrido'}, true);
+  S.prevAbierta = null;
   S.estado='detenido'; clearInterval(S.timer);
   await guardarSesion();
   localStorage.removeItem('mv_activa');
@@ -418,6 +487,7 @@ async function recuperar(){
   const last = S.pts[S.pts.length-1];
   S.dist = last ? last.d : 0; S.distGps = last && last.dg!=null ? last.dg : S.dist; S.prevFix = null;
   const le = [...S.marcas].reverse().find(m=>m.tipo==='estacion'); S.distEst = le ? le.d : 0;
+  S.prevAbierta = [...S.marcas].reverse().find(m=>m.tipo==='prev_inicio' && !S.marcas.some(x=>x.tipo==='prev_fin' && x.prev===m.prev)) || null;
   S.estado='pausa';
   pintarLinea(); pintarEstado(); pintarMarcas(); pintarStats(); dibujar(true);
   toast('Recorrido recuperado: toca SEGUIR');
@@ -439,15 +509,63 @@ function marcar(tipo, extra, silencioso){
   if (!silencioso){ vibra(120); }
   return m;
 }
-function marcarEstacion(){
-  let n = $('#selEst').value;
-  if (n==='__otra'){ n = prompt('Nombre de la estación / lugar:'); if(!n) return; }
-  const m = marcar('estacion',{nombre:n}); if (!m) return;
+/* Ventana propia para escribir datos. No se usa prompt() del navegador porque
+   congela la página mientras está abierta y se perderían segundos de GPS. */
+const confirmar = async (titulo, si) => !!(await pedir(titulo, [], si));
+function pedir(titulo, campos, si){
+  return new Promise(ok=>{
+    $('#mTit').textContent = titulo; $('#mOk').textContent = si || 'Guardar';
+    $('#mCampos').innerHTML = campos.map(c=>`<label>${esc(c.label)}<input data-k="${c.k}" value="${esc(c.valor??'')}" placeholder="${esc(c.ph||'')}"${c.modo?` inputmode="${c.modo}"`:''}></label>`).join('');
+    const md = $('#modal'); md.classList.add('show');
+    const cerrar = r => { md.classList.remove('show'); $('#mOk').onclick = $('#mNo').onclick = null; ok(r); };
+    $('#mNo').onclick = () => cerrar(null);
+    $('#mOk').onclick = () => { const r={}; md.querySelectorAll('input').forEach(i=>r[i.dataset.k]=i.value.trim()); cerrar(r); };
+    setTimeout(()=>{ const i=md.querySelector('input'); i && i.focus(); }, 50);
+  });
+}
+async function marcarEstacion(){
+  const sel = $('#selEst').value;
+  const m = marcar('estacion',{nombre: sel==='__otra' ? 'Otra' : sel}); if (!m) return;
   S.distEst = S.dist;
-  toast('📍 '+n+(m.acc?` (±${Math.round(m.acc)} m)`:''));
   $('#bEst').classList.add('flash'); setTimeout(()=>$('#bEst').classList.remove('flash'),500);
-  const l = estacionesOrdenadas(), i = l.indexOf(n);
+  if (sel==='__otra'){
+    const r = await pedir('Nombre de la estación / lugar', [{k:'n', label:'Nombre'}]);
+    if (r && r.n){ m.nombre = r.n; DB.put('marcas', m); pintarMarcas(); }
+    return;
+  }
+  toast('📍 '+sel+(m.acc?` (±${Math.round(m.acc)} m)`:''));
+  const l = estacionesOrdenadas(), i = l.indexOf(sel);
   if (i>=0 && i<l.length-1) pintarEstaciones(l[i+1]);
+}
+
+/* Prevención: INICIO y FIN marcan dónde empieza y termina en terreno; los PK
+   del boletín (km + poste) se escriben en los campos antes, durante o después. */
+function limpiarCamposPrev(){ ['#piKm','#piP','#pfKm','#pfP','#pNota'].forEach(s=>$(s).value=''); }
+function marcarPrevInicio(){
+  if (S.prevAbierta){ toast('Ya hay una prevención en curso'); return; }
+  const m = marcar('prev_inicio', {prev:'P'+Date.now(), pkDecl:pkDecl($('#piKm').value, $('#piP').value), nota:$('#pNota').value.trim()});
+  if (!m) return;
+  S.prevAbierta = m; pintarStats();
+  toast('⚠️ Inicio prevención '+pkTxt(m.pkDecl));
+}
+function marcarPrevFin(){
+  const ini = S.prevAbierta; if (!ini){ toast('Primero marca el INICIO'); return; }
+  const m = marcar('prev_fin', {prev:ini.prev, pkDecl:pkDecl($('#pfKm').value, $('#pfP').value)});
+  if (!m) return;
+  // lo escrito mientras se iba dentro de la zona completa el inicio
+  const pi = pkDecl($('#piKm').value, $('#piP').value), nota = $('#pNota').value.trim();
+  if (!ini.pkDecl && pi) ini.pkDecl = pi;
+  if (!ini.nota && nota) ini.nota = nota;
+  DB.put('marcas', ini);
+  S.prevAbierta = null; limpiarCamposPrev(); pintarMarcas(); pintarStats();
+  toast(`🏁 Fin prevención · ${Math.round(m.d-ini.d).toLocaleString('es-CL')} m medidos`);
+}
+async function marcarPoste(){
+  const m = marcar('poste', {}); if (!m) return;
+  const r = await pedir('PK del poste marcado', [{k:'pk', label:'PK (ej: 12 P5)', ph:'12 P5'}, {k:'nota', label:'Nota (opcional)'}]);
+  if (!r) return;
+  m.pkDecl = parsePk(r.pk); m.nota = r.nota; DB.put('marcas', m); pintarMarcas(); dibujar();
+  toast('📌 '+(pkTxt(m.pkDecl)||'Poste sin PK'));
 }
 function marcarCruce(){
   const nom = $('#inNom').value.trim();
@@ -476,30 +594,52 @@ function cambiarLinea(l){
   dibujar(true);
 }
 async function borrarMarca(id){
-  S.marcas = S.marcas.filter(m=>m.id!==id); await DB.del('marcas', id); pintarMarcas(); dibujar();
+  if (S.prevAbierta && S.prevAbierta.id===id) S.prevAbierta = null;
+  S.marcas = S.marcas.filter(m=>m.id!==id); await DB.del('marcas', id); pintarMarcas(); pintarStats(); dibujar();
 }
-async function renombrarMarca(id){
+async function editarMarca(id){
   const m = S.marcas.find(x=>x.id===id); if(!m) return;
-  const n = prompt('Nombre:', m.nombre||''); if (n==null) return;
-  m.nombre = n.trim(); await DB.put('marcas', m); pintarMarcas();
+  let r;
+  if (m.tipo==='prev_inicio' || m.tipo==='poste'){
+    r = await pedir(m.tipo==='poste'?'Poste':'Inicio de prevención', [
+      {k:'pk', label:'PK del boletín (ej: 6 P1)', valor:pkTxt(m.pkDecl).replace('PK ','')},
+      {k:'nota', label:m.tipo==='poste'?'Nota':'Restricción (ej: 30 km/h V1)', valor:m.nota}]);
+    if (!r) return; m.pkDecl = parsePk(r.pk); m.nota = r.nota;
+  } else if (m.tipo==='prev_fin'){
+    r = await pedir('Fin de prevención', [{k:'pk', label:'PK del boletín (ej: 6 P30)', valor:pkTxt(m.pkDecl).replace('PK ','')}]);
+    if (!r) return; m.pkDecl = parsePk(r.pk);
+  } else {
+    r = await pedir('Nombre', [{k:'n', label:'Nombre', valor:m.nombre}]);
+    if (!r) return; m.nombre = r.n;
+  }
+  await DB.put('marcas', m); pintarMarcas(); pintarStats(); dibujar();
 }
 function pintarMarcas(){
   const vis = S.marcas.filter(m=>m.tipo!=='evento').slice().reverse();
-  const ico = {estacion:'📍',cruce:'✚',cambio_via:'🔀',cambio_sentido:'↔️',cambio_linea:'🛤️',inicio:'▶',fin:'⏹'};
-  $('#marks').innerHTML = vis.length ? vis.map(m=>`<li>
-      <div class="t">${ico[m.tipo]||'•'} <b>${esc(m.nombre|| (m.subtipo||m.tipo))}</b>
-        <small><span class="tag" style="background:${VIA_COLOR[m.via||'']}">${m.via||'–'}</span>${m.subtipo&&m.nombre?esc(m.subtipo)+' · ':''}${hhmmss(m.t)} · ${fmtKm(m.d)} km${m.acc!=null?` · ±${Math.round(m.acc)} m`:''}${m.pkRef!=null?` · PK≈${fmtPk(m.pkRef)}`:''}</small></div>
-      ${m.tipo==='cruce'||m.tipo==='estacion'?`<button data-ren="${m.id}">✎</button>`:''}
+  const ico = {estacion:'📍',cruce:'✚',cambio_via:'🔀',cambio_sentido:'↔️',cambio_linea:'🛤️',inicio:'▶',fin:'⏹',prev_inicio:'⚠️',prev_fin:'🏁',poste:'📌'};
+  const pkMed = new Map(); tramos(S.pts, S.marcas).forEach(tr=>tr.marcas.forEach(m=>pkMed.set(m.id, m.pk)));
+  const editable = ['cruce','estacion','prev_inicio','prev_fin','poste'];
+  $('#marks').innerHTML = vis.length ? vis.map(m=>{
+      const pk = pkMed.get(m.id), dec = m.pkDecl ? `${fmtPk(m.pkDecl.v)} boletín` : '';
+      return `<li>
+      <div class="t">${ico[m.tipo]||'•'} <b>${esc(etiqueta(m))}</b>
+        <small><span class="tag" style="background:${VIA_COLOR[m.via||'']}">${m.via||'–'}</span>${m.subtipo&&m.nombre?esc(m.subtipo)+' · ':''}${hhmmss(m.t)} · ${fmtKm(m.d)} km${m.acc!=null?` · ±${Math.round(m.acc)} m`:''}${pk!=null?` · PK medido ${fmtPk(pk)}`:m.pkRef!=null?` · PK≈${fmtPk(m.pkRef)}`:''}${dec?' · '+dec:''}</small></div>
+      ${editable.includes(m.tipo)?`<button data-ren="${m.id}">✎</button>`:''}
       ${m.tipo!=='inicio'&&m.tipo!=='fin'?`<button data-del="${m.id}">✕</button>`:''}
-    </li>`).join('') : '<li class="hint">Sin marcas todavía.</li>';
+    </li>`; }).join('') : '<li class="hint">Sin marcas todavía.</li>';
   pintarResumen(S.pts, S.marcas, $('#resumen'));
 }
 
 /* --------------------------------------------------- tramos y PK medido */
 /* Divide el recorrido en "tramos" de un mismo sentido y línea, y a cada uno
-   le calcula el PK medido: se ancla en la estación origen (PK 0) si está
-   marcada; si no, en la estación marcada con el PK de referencia de la
-   bitácora. PK = ancla ± (distancia recorrida − distancia en el ancla). */
+   le calcula el PK medido.
+   - PK base: se ancla en la estación origen (PK 0) si está marcada; si no,
+     en una estación marcada con el PK de la bitácora.
+     PK = ancla ± (distancia recorrida − distancia en el ancla).
+   - PK calibrado: además usa cada poste con PK del boletín (postes sueltos e
+     inicio/fin de prevenciones). Entre dos puntos conocidos se interpola
+     según la distancia recorrida; fuera de ellos se extrapola desde el más
+     cercano. Un PK que contradice el sentido de marcha no se usa. */
 function tramos(pts, marcas){
   const res=[]; let cur=null;
   for (const p of pts){
@@ -510,7 +650,7 @@ function tramos(pts, marcas){
   res.forEach((tr,i)=>{
     // la marca usa el reloj del teléfono y el punto el del GPS: se da holgura
     const t0 = i ? tr.pts[0].t-5000 : -Infinity, t1 = i<res.length-1 ? res[i+1].pts[0].t-5000 : Infinity;
-    tr.marcas = marcas.filter(m=>m.t>=t0 && m.t<t1 && m.l===tr.l && m.sen===tr.sen && ['estacion','cruce','cambio_via'].includes(m.tipo));
+    tr.marcas = marcas.filter(m=>m.t>=t0 && m.t<t1 && m.l===tr.l && m.sen===tr.sen && TIPOS_TRAMO.includes(m.tipo));
     tr.largo = tr.pts[tr.pts.length-1].d - tr.pts[0].d;
     const sign = tr.sen==='decreciente' ? -1 : 1;
     const ests = tr.marcas.filter(m=>m.tipo==='estacion');
@@ -520,26 +660,68 @@ function tramos(pts, marcas){
       ancla = ests.find(m=>m.pkRef!=null);
       if (ancla) tr.ancla={nombre:ancla.nombre, d:ancla.d, pk:ancla.pkRef, tipo:'referencia'};
     }
-    const pkDe = d => tr.ancla ? +(tr.ancla.pk + sign*(d - tr.ancla.d)/1000).toFixed(3) : null;
-    tr.pkDe = pkDe;
-    tr.marcas = tr.marcas.map(m=>Object.assign({}, m, {pk:pkDe(m.d)}));
+    const base = d => tr.ancla ? +(tr.ancla.pk + sign*(d - tr.ancla.d)/1000).toFixed(3) : null;
+
+    const cand = [];
+    if (tr.ancla && tr.ancla.tipo==='origen') cand.push({d:tr.ancla.d, pk:0, nombre:tr.ancla.nombre});
+    tr.marcas.filter(m=>m.pkDecl).forEach(m=>cand.push({d:m.d, pk:m.pkDecl.v, nombre:etiqueta(m), id:m.id}));
+    cand.sort((a,b)=>a.d-b.d);
+    const an = [];
+    for (const c of cand){
+      const p = an[an.length-1];
+      if (!p || (c.d>p.d && sign*(c.pk-p.pk)>0)) an.push(c); else c.descartada = true;
+    }
+    tr.anclas = cand;
+    const pkDe = d => {
+      if (!an.length) return base(d);
+      if (an.length===1 || d<=an[0].d) return +(an[0].pk + sign*(d-an[0].d)/1000).toFixed(3);
+      const u = an[an.length-1];
+      if (d>=u.d) return +(u.pk + sign*(d-u.d)/1000).toFixed(3);
+      let k=1; while (an[k].d < d) k++;
+      const a=an[k-1], b=an[k];
+      return +(a.pk + (b.pk-a.pk)*(d-a.d)/(b.d-a.d)).toFixed(3);
+    };
+    tr.pkDe = pkDe; tr.pkBase = base;
+    tr.marcas = tr.marcas.map(m=>Object.assign({}, m, {pk:pkDe(m.d), pkBase:base(m.d)}));
+    // prevenciones: se emparejan inicio y fin
+    tr.prevenciones = tr.marcas.filter(m=>m.tipo==='prev_inicio').map(ini=>{
+      const fin = tr.marcas.find(m=>m.tipo==='prev_fin' && m.prev===ini.prev) || null;
+      const largoMed = fin ? Math.round(fin.d-ini.d) : null;
+      const largoBol = fin && ini.pkDecl && fin.pkDecl ? Math.round(Math.abs(fin.pkDecl.v-ini.pkDecl.v)*1000) : null;
+      return {ini, fin, largoMed, largoBol};
+    });
   });
   return res;
 }
+const signo = n => n==null ? '–' : (n>0?'+':'')+n.toLocaleString('es-CL');
 function pintarResumen(pts, marcas, el){
-  const trs = tramos(pts, marcas).filter(t=>t.marcas.some(m=>m.tipo==='estacion'));
-  if (!trs.length){ el.innerHTML='<p class="hint">Aparece al marcar estaciones.</p>'; return; }
+  const trs = tramos(pts, marcas).filter(t=>t.marcas.some(m=>['estacion','prev_inicio','poste'].includes(m.tipo)));
+  if (!trs.length){ el.innerHTML='<p class="hint">Aparece al marcar estaciones, prevenciones o postes.</p>'; return; }
   el.innerHTML = trs.map(tr=>{
     const ests = tr.marcas.filter(m=>m.tipo==='estacion');
     const sen = SENTIDOS[tr.l].find(s=>s.id===tr.sen).txt;
+    const usadas = tr.anclas.filter(a=>!a.descartada).length, malas = tr.anclas.filter(a=>a.descartada);
     let prev=null;
     const filas = ests.map(m=>{
       const dif = (m.pk!=null && m.pkRef!=null) ? Math.round((m.pk-m.pkRef)*1000) : null;
       const entre = prev ? Math.round(m.d-prev.d) : null; prev=m;
-      return `<tr><td>${esc(m.nombre)}</td><td class="n">${entre==null?'–':entre.toLocaleString('es-CL')}</td><td class="n"><b>${fmtPk(m.pk)}</b></td><td class="n">${fmtPk(m.pkRef)}</td><td class="n">${dif==null?'–':(dif>0?'+':'')+dif}</td></tr>`;
+      return `<tr><td>${esc(m.nombre)}</td><td class="n">${entre==null?'–':entre.toLocaleString('es-CL')}</td><td class="n"><b>${fmtPk(m.pk)}</b></td><td class="n">${fmtPk(m.pkRef)}</td><td class="n">${signo(dif)}</td></tr>`;
     }).join('');
-    return `<p style="margin:4px 0 6px"><b>${tr.l} · ${sen}</b> · ${fmtKm(tr.largo)} km<br><span class="hint">${tr.ancla?`PK anclado en ${esc(tr.ancla.nombre)} (${tr.ancla.tipo==='origen'?'PK 0 exacto':'PK de la bitácora'})`:'Sin ancla: marca una estación'}</span></p>
-      <table><tr><th>Estación</th><th class="n">m desde ant.</th><th class="n">PK medido</th><th class="n">PK bitác.</th><th class="n">dif m</th></tr>${filas}</table>`;
+    const tEst = ests.length ? `<table><tr><th>Estación</th><th class="n">m desde ant.</th><th class="n">PK medido</th><th class="n">PK bitác.</th><th class="n">dif m</th></tr>${filas}</table>` : '';
+    const filasPv = tr.prevenciones.map(({ini,fin,largoMed,largoBol})=>{
+      const dif = largoMed!=null && largoBol!=null ? largoMed-largoBol : null;
+      return `<tr><td>${esc(pkTxt(ini.pkDecl)||'¿?')} → ${esc(fin?pkTxt(fin.pkDecl)||'¿?':'sin FIN')}${ini.nota?`<br><small class="hint">${esc(ini.nota)}</small>`:''}</td><td class="n">${largoBol==null?'–':largoBol.toLocaleString('es-CL')}</td><td class="n"><b>${largoMed==null?'–':largoMed.toLocaleString('es-CL')}</b></td><td class="n">${signo(dif)}</td></tr>`;
+    }).join('');
+    const tPv = filasPv ? `<p class="hint" style="margin-top:10px">Prevenciones</p><table><tr><th>PK boletín</th><th class="n">largo boletín m</th><th class="n">largo medido m</th><th class="n">dif m</th></tr>${filasPv}</table>` : '';
+    const filasAn = tr.marcas.filter(m=>m.pkDecl).map(m=>{
+      const dif = m.pkBase!=null ? Math.round((m.pkBase-m.pkDecl.v)*1000) : null;
+      const mala = malas.some(a=>a.id===m.id);
+      return `<tr${mala?' style="color:var(--bad)"':''}><td>${esc(etiqueta(m))}${mala?' · no calza con el sentido, no se usa':''}</td><td class="n">${fmtPk(m.pkDecl.v)}</td><td class="n">${fmtPk(m.pkBase)}</td><td class="n">${signo(dif)}</td></tr>`;
+    }).join('');
+    const tAn = filasAn ? `<p class="hint" style="margin-top:10px">Postes del boletín vs. distancia medida</p><table><tr><th>Punto</th><th class="n">PK boletín</th><th class="n">PK sin calibrar</th><th class="n">dif m</th></tr>${filasAn}</table>` : '';
+    const nota = usadas ? `PK calibrado con ${usadas} punto${usadas>1?'s':''} conocido${usadas>1?'s':''}${tr.ancla&&tr.ancla.tipo==='origen'?' (incluye '+esc(tr.ancla.nombre)+' = PK 0)':''}`
+      : tr.ancla ? `PK anclado en ${esc(tr.ancla.nombre)} (PK de la bitácora)` : 'Sin ancla: marca una estación o un poste con PK';
+    return `<p style="margin:4px 0 6px"><b>${tr.l} · ${sen}</b> · ${fmtKm(tr.largo)} km<br><span class="hint">${nota}</span></p>${tEst}${tPv}${tAn}`;
   }).join('<hr style="border-color:var(--line)">');
 }
 
@@ -572,6 +754,16 @@ function dibujar(fit){
     g.beginPath(); g.moveTo(X(a.lon),Y(a.lat)); g.lineTo(X(b.lon),Y(b.lat)); g.stroke();
   }
   g.globalAlpha=1;
+  // zonas de prevención: franja roja entre el inicio y el fin (o hasta ahora)
+  g.lineWidth=11; g.strokeStyle='rgba(239,68,68,.45)'; g.lineCap='round';
+  for (const ini of S.marcas.filter(m=>m.tipo==='prev_inicio' && m.l===S.linea)){
+    const fin = S.marcas.find(m=>m.tipo==='prev_fin' && m.prev===ini.prev);
+    const dFin = fin ? fin.d : (S.prevAbierta===ini ? S.dist : ini.d);
+    const tramo = S.pts.filter(p=>p.t>=ini.t-1000 && p.d>=ini.d && p.d<=dFin && (!fin || p.t<=fin.t+1000));
+    if (tramo.length<2) continue;
+    g.beginPath(); tramo.forEach((p,i)=> i?g.lineTo(X(p.lon),Y(p.lat)):g.moveTo(X(p.lon),Y(p.lat))); g.stroke();
+  }
+  g.lineCap='butt';
   g.font='12px system-ui';
   for (const m of S.marcas){
     if (m.lat==null || m.l!==S.linea) continue;
@@ -579,6 +771,8 @@ function dibujar(fit){
     if (m.tipo==='estacion'){ g.fillStyle='#fff'; g.beginPath(); g.arc(x,y,5,0,7); g.fill(); g.fillText(m.nombre,x+8,y+4); }
     else if (m.tipo==='cruce'){ g.fillStyle='#fb923c'; g.beginPath(); g.moveTo(x,y-6); g.lineTo(x+6,y); g.lineTo(x,y+6); g.lineTo(x-6,y); g.fill(); }
     else if (m.tipo==='cambio_via'){ g.fillStyle=VIA_COLOR[m.hacia]||'#fff'; g.beginPath(); g.moveTo(x,y-7); g.lineTo(x+6,y+5); g.lineTo(x-6,y+5); g.fill(); }
+    else if (m.tipo==='prev_inicio' || m.tipo==='prev_fin'){ g.fillStyle='#ef4444'; g.fillRect(x-5,y-5,10,10); g.fillStyle='#fecaca'; if (m.pkDecl) g.fillText(pkTxt(m.pkDecl),x+8,y+4); }
+    else if (m.tipo==='poste'){ g.fillStyle='#facc15'; g.beginPath(); g.arc(x,y,4,0,7); g.fill(); g.fillStyle='#fef08a'; if (m.pkDecl) g.fillText(pkTxt(m.pkDecl),x+8,y+4); }
   }
   if (S.fix){
     const x=X(S.fix.lon), y=Y(S.fix.lat);
@@ -616,6 +810,8 @@ function pkPorPunto(trs){
   for (const tr of trs) for (const p of tr.pts) pk.set(p, tr.pkDe(p.d));
   return pk;
 }
+const puntoPk = m => ({pk_boletin:m.pkDecl?m.pkDecl.v:null, km:m.pkDecl?m.pkDecl.km:null, poste:m.pkDecl?m.pkDecl.poste:null,
+  pk_medido:m.pk, pk_sin_calibrar:m.pkBase, pk_bitacora:m.pkRef, dist_m:m.d, lat:m.lat, lon:m.lon, precision_m:m.acc, via:m.via, hora:new Date(m.t).toISOString()});
 async function exportar(id, fmt){
   const {ses, pts, marcas} = await datosSesion(id);
   const trsBase = tramos(pts, marcas), pkDe = pkPorPunto(trsBase);
@@ -626,10 +822,16 @@ async function exportar(id, fmt){
       desde:new Date(tr.pts[0].t).toISOString(), hasta:new Date(tr.pts[tr.pts.length-1].t).toISOString(), n_puntos:tr.pts.length,
       estaciones: tr.marcas.filter(m=>m.tipo==='estacion').map(m=>({nombre:m.nombre, pk:m.pk, pk_bitacora:m.pkRef, lat:m.lat, lon:m.lon, precision_m:m.acc, via:m.via, hora:new Date(m.t).toISOString()})),
       cruces: tr.marcas.filter(m=>m.tipo==='cruce').map(m=>({tipo:m.subtipo, nombre:m.nombre, pk:m.pk, pk_bitacora:m.pkRef, lat:m.lat, lon:m.lon, precision_m:m.acc, via:m.via, hora:new Date(m.t).toISOString()})),
-      cambios_via: tr.marcas.filter(m=>m.tipo==='cambio_via').map(m=>({desde:m.desde, hacia:m.hacia, pk:m.pk, lat:m.lat, lon:m.lon, precision_m:m.acc, hora:new Date(m.t).toISOString()}))
+      cambios_via: tr.marcas.filter(m=>m.tipo==='cambio_via').map(m=>({desde:m.desde, hacia:m.hacia, pk:m.pk, lat:m.lat, lon:m.lon, precision_m:m.acc, hora:new Date(m.t).toISOString()})),
+      prevenciones: tr.prevenciones.map(({ini,fin,largoMed,largoBol})=>({
+        restriccion:ini.nota||'', largo_boletin_m:largoBol, largo_medido_m:largoMed,
+        inicio:puntoPk(ini), fin:fin?puntoPk(fin):null })),
+      postes: tr.marcas.filter(m=>m.tipo==='poste').map(m=>Object.assign({nota:m.nota||''}, puntoPk(m))),
+      puntos_conocidos: tr.anclas.map(a=>({nombre:a.nombre, pk:a.pk, dist_m:a.d, usado:!a.descartada}))
     }));
-    txt = JSON.stringify({app:'mapeo-via', version:2,
-      campos_puntos:'t=hora teléfono (ms), tg=hora GPS (ms), nuevo=1 si el GPS entregó posición nueva ese segundo, edad=s desde esa posición, acc=precisión m, spd=m/s, hdg=rumbo°, alt=m, d=odómetro por velocidad GPS (m), dg=suma de posiciones sin filtro (m), pk=PK medido (km)',
+    txt = JSON.stringify({app:'mapeo-via', version:3,
+      campos_puntos:'t=hora teléfono (ms), tg=hora GPS (ms), nuevo=1 si el GPS entregó posición nueva ese segundo, edad=s desde esa posición, acc=precisión m, spd=m/s, hdg=rumbo°, alt=m, d=odómetro por velocidad GPS (m), dg=suma de posiciones sin filtro (m), pk=PK medido y calibrado con los postes del boletín (km)',
+      convencion_poste:'PK km P poste = km + poste/100 (ej: PK 6 P30 = 6,30)',
       recorrido:ses, tramos:trs, marcas, puntos:pts.map(p=>{ const {s,...q}=p; q.pk = pkDe.get(p) ?? null; return q; })});
     mime='application/json'; ext='json';
   } else if (fmt==='csv'){
@@ -640,7 +842,7 @@ async function exportar(id, fmt){
       const mm = ms.filter(m=>m.tipo!=='evento');
       const pk = pkDe.get(p);
       return [new Date(p.t).toISOString(),p.tg?new Date(p.tg).toISOString():'',p.nuevo??'',p.edad??'',p.lat,p.lon,p.acc,p.spd==null?'':(p.spd*3.6).toFixed(1),p.hdg??'',p.alt??'',p.d,p.dg??'',pk==null?'':pk,p.l,p.sen,p.via,
-        mm.map(m=>m.tipo).join('|'), '"'+mm.map(m=>(m.subtipo?m.subtipo+': ':'')+(m.nombre||'')).join('|').replace(/"/g,'""')+'"'].join(',');
+        mm.map(m=>m.tipo).join('|'), '"'+mm.map(m=>(m.subtipo&&m.nombre?m.subtipo+': ':'')+etiqueta(m)).join('|').replace(/"/g,'""')+'"'].join(',');
     });
     txt = '﻿'+h+'\n'+rows.join('\n'); mime='text/csv'; ext='csv';
   } else {
@@ -648,7 +850,7 @@ async function exportar(id, fmt){
     const porVia=[]; let cur=null;
     for (const p of pts){ if(!cur||cur.via!==p.via){ cur={via:p.via,c:cur?[cur.c[cur.c.length-1]]:[]}; porVia.push(cur);} cur.c.push([p.lon,p.lat]); }
     porVia.forEach(s=>s.c.length>1&&feats.push({type:'Feature',properties:{via:s.via,stroke:VIA_COLOR[s.via||'']},geometry:{type:'LineString',coordinates:s.c}}));
-    marcas.filter(m=>m.lat!=null&&m.tipo!=='evento').forEach(m=>feats.push({type:'Feature',properties:{tipo:m.tipo,subtipo:m.subtipo||'',nombre:m.nombre||'',via:m.via,dist_m:m.d,precision_m:m.acc,hora:new Date(m.t).toISOString()},geometry:{type:'Point',coordinates:[m.lon,m.lat]}}));
+    marcas.filter(m=>m.lat!=null&&m.tipo!=='evento').forEach(m=>feats.push({type:'Feature',properties:{tipo:m.tipo,subtipo:m.subtipo||'',nombre:etiqueta(m),pk_boletin:m.pkDecl?m.pkDecl.v:null,prevencion:m.prev||'',via:m.via,dist_m:m.d,precision_m:m.acc,hora:new Date(m.t).toISOString()},geometry:{type:'Point',coordinates:[m.lon,m.lat]}}));
     txt = JSON.stringify({type:'FeatureCollection',features:feats}); mime='application/geo+json'; ext='geojson';
   }
   const nombre = nombreArchivo(ses, ext);
@@ -674,7 +876,7 @@ async function pintarSesiones(){
 async function verSesion(id){
   if (S.ses){ toast('Termina el recorrido en curso primero'); return; }
   const {ses, pts, marcas} = await datosSesion(id);
-  S.pts=pts; S.marcas=marcas; S.dist=pts.length?pts[pts.length-1].d:0; S.distEst=S.dist;
+  S.pts=pts; S.marcas=marcas; S.dist=pts.length?pts[pts.length-1].d:0; S.distEst=S.dist; S.prevAbierta=null;
   S.linea = ses.linea; pintarLinea(); pintarMarcas(); pintarStats(); dibujar(true);
   window.scrollTo({top:$('#map').offsetTop-160, behavior:'smooth'});
 }
@@ -686,16 +888,17 @@ $('#vias').onclick = e=>{ const b=e.target.closest('button'); if(b) cambiarVia(b
 $('#tipos').onclick = e=>{ const b=e.target.closest('button'); if(b){ S.tipo=b.dataset.t; pintarTipos(); } };
 $('#bStart').onclick = start; $('#bPause').onclick = pausa; $('#bStop').onclick = stop;
 $('#bEst').onclick = marcarEstacion; $('#bCruce').onclick = marcarCruce;
+$('#bPrevIni').onclick = marcarPrevInicio; $('#bPrevFin').onclick = marcarPrevFin; $('#bPoste').onclick = marcarPoste;
 $('#bFit').onclick = ()=>{ V.follow=false; $('#bFollow').classList.remove('on'); dibujar(true); };
 $('#bFollow').onclick = ()=>{ V.follow=!V.follow; $('#bFollow').classList.toggle('on',V.follow); dibujar(); };
-$('#bUndo').onclick = ()=>{ const m=[...S.marcas].reverse().find(x=>['estacion','cruce','cambio_via'].includes(x.tipo)); if(m && confirm(`¿Borrar "${m.nombre||m.subtipo||m.tipo}"?`)) borrarMarca(m.id); };
-$('#marks').onclick = e=>{ const b=e.target.closest('button'); if(!b) return;
-  if (b.dataset.del && confirm('¿Borrar esta marca?')) borrarMarca(b.dataset.del);
-  if (b.dataset.ren) renombrarMarca(b.dataset.ren); };
+$('#bUndo').onclick = async ()=>{ const m=[...S.marcas].reverse().find(x=>TIPOS_TRAMO.includes(x.tipo)); if(m && await confirmar(`¿Borrar "${etiqueta(m)}"?`, 'Borrar')) borrarMarca(m.id); };
+$('#marks').onclick = async e=>{ const b=e.target.closest('button'); if(!b) return;
+  if (b.dataset.del && await confirmar('¿Borrar esta marca?', 'Borrar')) borrarMarca(b.dataset.del);
+  if (b.dataset.ren) editarMarca(b.dataset.ren); };
 $('#sessions').onclick = async e=>{ const b=e.target.closest('button'); if(!b) return;
   if (b.dataset.exp){ if (S.ses&&S.ses.id===b.dataset.exp) await guardarSesion(); exportar(b.dataset.exp, b.dataset.f); }
   if (b.dataset.ver) verSesion(b.dataset.ver);
-  if (b.dataset.bor && confirm('¿Borrar este recorrido del teléfono? Exporta antes si lo necesitas.')){ await DB.delSes(b.dataset.bor); pintarSesiones(); } };
+  if (b.dataset.bor && await confirmar('¿Borrar este recorrido del teléfono? Exporta antes si lo necesitas.', 'Borrar')){ await DB.delSes(b.dataset.bor); pintarSesiones(); } };
 window.addEventListener('resize', ()=>dibujar());
 window.addEventListener('beforeunload', e=>{ if (S.estado==='grabando'){ guardarSesion(); e.preventDefault(); e.returnValue=''; } });
 
