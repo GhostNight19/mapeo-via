@@ -188,10 +188,8 @@ const VIA_DEFECTO = { creciente:'V1', decreciente:'V2' };
 const TIPOS = ['Cruce vehicular','Cruce peatonal','Paso nivel','Puente','Túnel','Desvío / aguja','Señal','Otro'];
 const VIA_COLOR = { V1:'#3b82f6', V2:'#22c55e', V4:'#f59e0b', V8:'#d946ef', '':'#94a3b8' };
 
-/* Filtros de calidad del odómetro */
-const ACC_MAX = 25;        // m: peor que esto no suma distancia
-const JITTER_M = 6;        // m: detenido, saltos menores se ignoran
-const VEL_MAX = 45;        // m/s (162 km/h): más que esto es un salto del GPS
+/* Solo para pintar: no descarta ningún punto ni metro */
+const ACC_MAX = 25;        // m: precisión peor que esto se dibuja atenuada
 
 /* ---------------------------------------------------------------- util */
 const $ = s => document.querySelector(s);
@@ -263,9 +261,10 @@ const S = {
   ses: null,            // sesión activa {id, inicio, linea, ...}
   estado: 'detenido',   // detenido | grabando | pausa
   fix: null,            // última posición recibida
-  lastSavedTs: 0,
-  lastAcc: null,        // último punto aceptado para odómetro
-  dist: 0,              // m acumulados
+  lastFixTs: 0,         // hora GPS de la última posición usada
+  prevFix: null,        // posición anterior, para sumar distancia
+  dist: 0,              // m acumulados (odómetro por velocidad GPS)
+  distGps: 0,           // m acumulados sumando posiciones, sin filtro
   distEst: 0,           // dist en la última estación marcada
   pts: [],              // puntos de la sesión en memoria (para el mapa)
   marcas: [],
@@ -331,25 +330,27 @@ function iniciarGPS(){
   }, {enableHighAccuracy:true, maximumAge:0, timeout:15000});
 }
 
-/* Cada segundo: si llegó un fix nuevo, se guarda como punto. */
+/* Cada segundo se guarda un punto, sin excepción y sin filtros de metros.
+   Si el GPS no alcanzó a entregar una posición nueva en ese segundo, se
+   repite la última y queda marcado con gps_nuevo = 0 y la edad del dato. */
 async function tick(){
   if (S.estado!=='grabando' || !S.fix) return;
-  const f = S.fix;
-  if (f.t === S.lastSavedTs) return;
-  S.lastSavedTs = f.t;
-
-  // odómetro filtrado
-  if (f.acc <= ACC_MAX){
-    const a = S.lastAcc;
-    if (!a) S.lastAcc = f;
-    else {
-      const d = hav(a.lat,a.lon,f.lat,f.lon), dt = Math.max(0.5,(f.t-a.t)/1000);
-      const quieto = (f.spd!=null && f.spd<0.8) && d < Math.max(JITTER_M, f.acc*0.6);
-      if (d/dt > VEL_MAX) { /* salto: se descarta */ }
-      else if (!quieto && d >= 1){ S.dist += d; S.lastAcc = f; }
+  const f = S.fix, ahora = Date.now();
+  const nuevo = f.t !== S.lastFixTs;
+  if (nuevo){
+    const a = S.prevFix;
+    if (a){
+      const dt = (f.t - a.t)/1000, dPos = hav(a.lat,a.lon,f.lat,f.lon);
+      S.distGps += dPos;
+      // Odómetro: integra la velocidad que mide el GPS (no suma el temblor de
+      // la posición con el tren detenido). Si el teléfono no entrega velocidad
+      // o hubo un corte de más de 5 s, suma la distancia entre posiciones.
+      if (f.spd!=null && a.spd!=null && dt>0 && dt<=5) S.dist += (f.spd+a.spd)/2*dt;
+      else S.dist += dPos;
     }
+    S.prevFix = f; S.lastFixTs = f.t;
   }
-  const pt = {s:S.ses.id, t:f.t, lat:+f.lat.toFixed(7), lon:+f.lon.toFixed(7), acc:+f.acc.toFixed(1), spd:f.spd==null?null:+f.spd.toFixed(2), hdg:f.hdg==null?null:Math.round(f.hdg), alt:f.alt==null?null:+f.alt.toFixed(1), d:+S.dist.toFixed(1), l:S.linea, sen:S.sentido, via:S.via};
+  const pt = {s:S.ses.id, t:ahora, tg:f.t, nuevo:nuevo?1:0, edad:+((ahora-f.t)/1000).toFixed(1), lat:+f.lat.toFixed(7), lon:+f.lon.toFixed(7), acc:+f.acc.toFixed(1), spd:f.spd==null?null:+f.spd.toFixed(2), hdg:f.hdg==null?null:Math.round(f.hdg), alt:f.alt==null?null:+f.alt.toFixed(1), d:+S.dist.toFixed(1), dg:+S.distGps.toFixed(1), l:S.linea, sen:S.sentido, via:S.via};
   S.pts.push(pt);
   DB.put('puntos', pt).catch(()=>{});
   if (S.pts.length % 10 === 0) guardarSesion();
@@ -381,7 +382,7 @@ async function start(){
   if (!S.ses){
     const now = Date.now();
     S.ses = {id:'R'+now, inicio:now, fin:now, linea:S.linea, dist:0, npts:0, estado:'grabando'};
-    S.pts=[]; S.marcas=[]; S.dist=0; S.distEst=0; S.lastAcc=null; S.lastSavedTs=0;
+    S.pts=[]; S.marcas=[]; S.dist=0; S.distGps=0; S.distEst=0; S.prevFix=null; S.lastFixTs=0;
     await DB.put('sesiones', S.ses);
     marcar('inicio',{nombre:'Inicio recorrido'}, true);
   } else marcar('evento',{nombre:'Reanuda'}, true);
@@ -392,7 +393,7 @@ async function start(){
   vibra(80);
 }
 function pausa(){
-  S.estado='pausa'; S.lastAcc=null;
+  S.estado='pausa'; S.prevFix=null;
   marcar('evento',{nombre:'Pausa'}, true);
   guardarSesion(); pintarEstado();
 }
@@ -415,7 +416,7 @@ async function recuperar(){
   S.pts = (await DB.bySes('puntos', id)).sort((a,b)=>a.t-b.t);
   S.marcas = (await DB.bySes('marcas', id)).sort((a,b)=>a.t-b.t);
   const last = S.pts[S.pts.length-1];
-  S.dist = last ? last.d : 0;
+  S.dist = last ? last.d : 0; S.distGps = last && last.dg!=null ? last.dg : S.dist; S.prevFix = null;
   const le = [...S.marcas].reverse().find(m=>m.tipo==='estacion'); S.distEst = le ? le.d : 0;
   S.estado='pausa';
   pintarLinea(); pintarEstado(); pintarMarcas(); pintarStats(); dibujar(true);
@@ -609,42 +610,36 @@ function nombreArchivo(ses, ext){
   const d=new Date(ses.inicio), p=n=>String(n).padStart(2,'0');
   return `mapeo_${ses.linea}_${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.${ext}`;
 }
-/* Trazado medido: se remuestrea cada 20 m sobre los puntos buenos, con PK. */
-function trazadoMedido(tr, paso=20){
-  const buenos = tr.pts.filter(p=>p.acc<=ACC_MAX);
-  if (buenos.length<2 || !tr.ancla) return [];
-  const out=[]; let sig = Math.ceil(buenos[0].d/paso)*paso;
-  for (let i=1;i<buenos.length;i++){
-    const a=buenos[i-1], b=buenos[i];
-    while (sig<=b.d && b.d>a.d){
-      const f=(sig-a.d)/(b.d-a.d);
-      out.push([tr.pkDe(sig), +(a.lat+f*(b.lat-a.lat)).toFixed(6), +(a.lon+f*(b.lon-a.lon)).toFixed(6), a.via||b.via]);
-      sig+=paso;
-    }
-  }
-  if (tr.sen==='decreciente') out.reverse();
-  return out;
+/* PK medido de cada punto (según el tramo al que pertenece). */
+function pkPorPunto(trs){
+  const pk = new Map();
+  for (const tr of trs) for (const p of tr.pts) pk.set(p, tr.pkDe(p.d));
+  return pk;
 }
 async function exportar(id, fmt){
   const {ses, pts, marcas} = await datosSesion(id);
+  const trsBase = tramos(pts, marcas), pkDe = pkPorPunto(trsBase);
   let txt, mime, ext;
   if (fmt==='json'){
-    const trs = tramos(pts, marcas).map(tr=>({
+    const trs = trsBase.map(tr=>({
       linea:tr.l, sentido:tr.sen, largo_m:+tr.largo.toFixed(1), ancla:tr.ancla||null,
+      desde:new Date(tr.pts[0].t).toISOString(), hasta:new Date(tr.pts[tr.pts.length-1].t).toISOString(), n_puntos:tr.pts.length,
       estaciones: tr.marcas.filter(m=>m.tipo==='estacion').map(m=>({nombre:m.nombre, pk:m.pk, pk_bitacora:m.pkRef, lat:m.lat, lon:m.lon, precision_m:m.acc, via:m.via, hora:new Date(m.t).toISOString()})),
       cruces: tr.marcas.filter(m=>m.tipo==='cruce').map(m=>({tipo:m.subtipo, nombre:m.nombre, pk:m.pk, pk_bitacora:m.pkRef, lat:m.lat, lon:m.lon, precision_m:m.acc, via:m.via, hora:new Date(m.t).toISOString()})),
-      cambios_via: tr.marcas.filter(m=>m.tipo==='cambio_via').map(m=>({desde:m.desde, hacia:m.hacia, pk:m.pk, lat:m.lat, lon:m.lon, precision_m:m.acc, hora:new Date(m.t).toISOString()})),
-      trazado_cada_20m: trazadoMedido(tr)   // [pk, lat, lon, via]
+      cambios_via: tr.marcas.filter(m=>m.tipo==='cambio_via').map(m=>({desde:m.desde, hacia:m.hacia, pk:m.pk, lat:m.lat, lon:m.lon, precision_m:m.acc, hora:new Date(m.t).toISOString()}))
     }));
-    txt = JSON.stringify({app:'mapeo-via', version:1, recorrido:ses, tramos:trs, marcas, puntos:pts.map(({s,...p})=>p)});
+    txt = JSON.stringify({app:'mapeo-via', version:2,
+      campos_puntos:'t=hora teléfono (ms), tg=hora GPS (ms), nuevo=1 si el GPS entregó posición nueva ese segundo, edad=s desde esa posición, acc=precisión m, spd=m/s, hdg=rumbo°, alt=m, d=odómetro por velocidad GPS (m), dg=suma de posiciones sin filtro (m), pk=PK medido (km)',
+      recorrido:ses, tramos:trs, marcas, puntos:pts.map(p=>{ const {s,...q}=p; q.pk = pkDe.get(p) ?? null; return q; })});
     mime='application/json'; ext='json';
   } else if (fmt==='csv'){
-    const h='hora,lat,lon,precision_m,vel_kmh,rumbo,alt,dist_m,linea,sentido,via,marca_tipo,marca_nombre';
+    const h='hora,hora_gps,gps_nuevo,edad_s,lat,lon,precision_m,vel_kmh,rumbo,alt,dist_m,dist_gps_m,pk,linea,sentido,via,marca_tipo,marca_nombre';
     const idx = new Map(); marcas.forEach(m=>{ const k=Math.round(m.t/1000); idx.set(k,(idx.get(k)||[]).concat(m)); });
     const rows = pts.map(p=>{
       const ms = idx.get(Math.round(p.t/1000))||[];
       const mm = ms.filter(m=>m.tipo!=='evento');
-      return [new Date(p.t).toISOString(),p.lat,p.lon,p.acc,p.spd==null?'':(p.spd*3.6).toFixed(1),p.hdg??'',p.alt??'',p.d,p.l,p.sen,p.via,
+      const pk = pkDe.get(p);
+      return [new Date(p.t).toISOString(),p.tg?new Date(p.tg).toISOString():'',p.nuevo??'',p.edad??'',p.lat,p.lon,p.acc,p.spd==null?'':(p.spd*3.6).toFixed(1),p.hdg??'',p.alt??'',p.d,p.dg??'',pk==null?'':pk,p.l,p.sen,p.via,
         mm.map(m=>m.tipo).join('|'), '"'+mm.map(m=>(m.subtipo?m.subtipo+': ':'')+(m.nombre||'')).join('|').replace(/"/g,'""')+'"'].join(',');
     });
     txt = '﻿'+h+'\n'+rows.join('\n'); mime='text/csv'; ext='csv';
